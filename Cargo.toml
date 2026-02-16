@@ -1,0 +1,15 @@
+[package]
+name = "quasar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quasar-derive = { path = "derive" }
+wincode = { version = "0.4.4", features = ["derive"] }
+solana-program-error = "3.0.0"
+solana-account-view = "1.0.0"
+solana-rent = { version = "4.0.0", features = ["sysvar"] }
+solana-address = { version = "2.2.0", features = ["wincode", "decode"] }
+pinocchio = "0.10.2" # TODO: Replace this
+pinocchio-system = "0.5.0" # TODO: Replace this
+pinocchio-token = "0.5.0" # TODO: Replace this
