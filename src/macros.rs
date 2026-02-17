@@ -36,3 +36,21 @@ macro_rules! define_account {
         }
     };
 }
+
+#[macro_export]
+macro_rules! require {
+    ($condition:expr, $error:expr) => {
+        if !($condition) {
+            return Err($error.into());
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! require_eq {
+    ($left:expr, $right:expr, $error:expr) => {
+        if $left != $right {
+            return Err($error.into());
+        }
+    };
+}

@@ -27,19 +27,3 @@ impl<T: QuasarAccount> Initialize<T> {
         Ok(unsafe { &mut *(view as *const AccountView as *mut Self) })
     }
 }
-
-impl<T: QuasarAccount> core::ops::Deref for Initialize<T> {
-    type Target = T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*(self.view.borrow_unchecked().as_ptr().add(1) as *const T) }
-    }
-}
-
-impl<T: QuasarAccount> core::ops::DerefMut for Initialize<T> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.view.borrow_unchecked_mut().as_mut_ptr().add(1) as *mut T) }
-    }
-}

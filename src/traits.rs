@@ -22,6 +22,11 @@ pub trait Space {
     const SPACE: usize;
 }
 
+pub trait AccountCheck {
+    #[inline(always)]
+    fn check(_view: &AccountView) -> Result<(), ProgramError> { Ok(()) }
+}
+
 pub trait QuasarAccount: Sized + Discriminator + Space {
     fn deserialize(data: &[u8]) -> Result<Self, ProgramError>;
     fn serialize(&self, data: &mut [u8]) -> Result<(), ProgramError>;

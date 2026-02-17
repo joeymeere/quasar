@@ -2,6 +2,8 @@ use crate::prelude::*;
 
 pub struct TokenAccount;
 
+impl AccountCheck for TokenAccount {}
+
 impl Owner for TokenAccount {
     const OWNER: Address = Address::new_from_array([
         6, 221, 246, 225, 215, 101, 161, 147,
@@ -12,7 +14,7 @@ impl Owner for TokenAccount {
 }
 
 impl core::ops::Deref for Account<TokenAccount> {
-    type Target = pinocchio_token::state::TokenAccount;
+    type Target = crate::token::TokenAccountState;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {

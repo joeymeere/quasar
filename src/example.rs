@@ -23,7 +23,7 @@ pub fn make(ctx: Ctx<Make>, receive: u64) -> Result<(), ProgramError> {
     }.init(
         ctx.accounts.escrow,
         ctx.accounts.maker.to_account_view(),
-        &ctx.accounts.rent
+        Some(ctx.accounts.rent),
     )
 }
 
@@ -34,4 +34,20 @@ pub struct EscrowAccount {
     pub mint_b: Address,
     pub maker_ta_b: Address,
     pub receive: u64,
+}
+
+#[derive(Accounts)]
+pub struct Take<'info> {
+    pub taker: &'info mut Signer,
+    #[account(has_one = maker, constraint = escrow.receive > 0)]
+    pub escrow: &'info Account<EscrowAccount>,
+    pub maker: &'info UncheckedAccount,
+    pub token_program: &'info TokenProgram,
+    pub system_program: &'info SystemProgram,
+}
+
+#[instruction(discriminator = 1)]
+pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
+    let _escrow_data = ctx.accounts.escrow.get()?;
+    Ok(())
 }
