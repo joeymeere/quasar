@@ -109,13 +109,13 @@ impl<T: ZeroCopyDeref> core::ops::Deref for Account<T> {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { &*T::deref_data(self.to_account_view().borrow_unchecked().as_ptr()) }
+        unsafe { &*(self.to_account_view().data_ptr().add(T::DATA_OFFSET) as *const T::Target) }
     }
 }
 
-impl<T: QuasarAccount + Owner> core::ops::DerefMut for Account<T> {
+impl<T: ZeroCopyDeref> core::ops::DerefMut for Account<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.to_account_view().borrow_unchecked_mut().as_mut_ptr().add(1) as *mut T) }
+        unsafe { &mut *(self.to_account_view().data_ptr().add(T::DATA_OFFSET) as *mut T::Target) }
     }
 }

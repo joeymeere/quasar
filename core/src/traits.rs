@@ -52,15 +52,5 @@ pub trait QuasarAccount: Sized + Discriminator + Space {
 
 pub trait ZeroCopyDeref: Owner {
     type Target;
-
-    unsafe fn deref_data(ptr: *const u8) -> *const Self::Target;
-}
-
-impl<T: QuasarAccount + Owner> ZeroCopyDeref for T {
-    type Target = T;
-
-    #[inline(always)]
-    unsafe fn deref_data(ptr: *const u8) -> *const T {
-        unsafe { ptr.add(1) as *const T }
-    }
+    const DATA_OFFSET: usize;
 }

@@ -121,7 +121,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quasar-example"
+name = "quasar-escrow"
 version = "0.1.0"
 dependencies = [
  "quasar-core",
