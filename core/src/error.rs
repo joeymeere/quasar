@@ -15,4 +15,5 @@ pub enum QuasarError {
     AccountOwnedByWrongProgram,
     AccountNotMutable,
     AccountNotSigner,
+    AddressMismatch,
 }

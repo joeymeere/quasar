@@ -1,10 +1,31 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, FnArg, Ident, ItemFn, Pat,
+    parse_macro_input, FnArg, GenericArgument, Ident, ItemFn, Pat, PathArguments, ReturnType, Type,
 };
 
 use crate::helpers::{InstructionArgs, map_to_pod_type, zc_deserialize_expr};
+
+fn extract_result_ok_type(output: &ReturnType) -> Option<&Type> {
+    if let ReturnType::Type(_, ty) = output {
+        if let Type::Path(type_path) = ty.as_ref() {
+            if let Some(last) = type_path.path.segments.last() {
+                if last.ident == "Result" {
+                    if let PathArguments::AngleBracketed(args) = &last.arguments {
+                        if let Some(GenericArgument::Type(ok_ty)) = args.args.first() {
+                            return Some(ok_ty);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(t) if t.elems.is_empty())
+}
 
 pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as InstructionArgs);
@@ -23,6 +44,14 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         _ => panic!("#[instruction] ctx parameter must be an identifier"),
     };
     let param_type = &first_arg.ty;
+
+    let has_return_data = extract_result_ok_type(&func.sig.output)
+        .is_some_and(|ok_ty| !is_unit_type(ok_ty));
+    let return_ok_type = extract_result_ok_type(&func.sig.output).cloned();
+
+    if has_return_data {
+        func.sig.output = syn::parse_quote!(-> Result<(), ProgramError>);
+    }
 
     let remaining: Vec<_> = func.sig.inputs.iter().skip(1).filter_map(|arg| {
         match arg {
@@ -58,7 +87,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         }).collect();
 
         let zc_field_types: Vec<proc_macro2::TokenStream> = remaining.iter().map(|pt| {
-            map_to_pod_type(&*pt.ty)
+            map_to_pod_type(&pt.ty)
         }).collect();
 
         new_stmts.push(syn::parse_quote!(
@@ -87,14 +116,44 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         ));
 
         for (i, name) in field_names.iter().enumerate() {
-            let expr = zc_deserialize_expr(name, &*remaining[i].ty);
+            let expr = zc_deserialize_expr(name, &remaining[i].ty);
             new_stmts.push(syn::parse_quote!(
                 let #name = #expr;
             ));
         }
     }
 
-    func.block.stmts = new_stmts.into_iter().chain(stmts).collect();
+    if has_return_data {
+        let ok_ty = return_ok_type.unwrap();
+        let user_body: proc_macro2::TokenStream = stmts.iter().map(|s| quote!(#s)).collect();
+        new_stmts.push(syn::parse_quote!(
+            const _: () = assert!(
+                core::mem::align_of::<#ok_ty>() == 1,
+                "return data type must have alignment 1 (use Pod types)"
+            );
+        ));
+        new_stmts.push(syn::parse_quote!(
+            {
+                let __result: Result<#ok_ty, ProgramError> = (|| { #user_body })();
+                match __result {
+                    Ok(ref __val) => {
+                        let __bytes = unsafe {
+                            core::slice::from_raw_parts(
+                                __val as *const #ok_ty as *const u8,
+                                core::mem::size_of::<#ok_ty>(),
+                            )
+                        };
+                        quasar_core::return_data::set_return_data(__bytes);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        ));
+        func.block.stmts = new_stmts;
+    } else {
+        func.block.stmts = new_stmts.into_iter().chain(stmts).collect();
+    }
 
     quote!(#func).into()
 }
