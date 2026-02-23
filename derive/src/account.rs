@@ -573,7 +573,7 @@ fn generate_dynamic_account(
                 DynKind::Str { max } => {
                     quote! {
                         #[inline(always)]
-                        pub fn #setter_name(&self, __payer: &impl AsAccountView, __value: &str) -> Result<(), ProgramError> {
+                        pub fn #setter_name(&mut self, __payer: &impl AsAccountView, __value: &str) -> Result<(), ProgramError> {
                             if __value.len() > #max {
                                 return Err(QuasarError::DynamicFieldTooLong.into());
                             }
@@ -638,7 +638,7 @@ fn generate_dynamic_account(
 
                     quote! {
                         #[inline(always)]
-                        pub fn #setter_name(&self, __payer: &impl AsAccountView, __value: &[#elem]) -> Result<(), ProgramError> {
+                        pub fn #setter_name(&mut self, __payer: &impl AsAccountView, __value: &[#elem]) -> Result<(), ProgramError> {
                             if __value.len() > #max {
                                 return Err(QuasarError::DynamicFieldTooLong.into());
                             }
@@ -699,8 +699,7 @@ fn generate_dynamic_account(
                         }
 
                         #[inline(always)]
-                        #[allow(clippy::mut_from_ref)]
-                        pub fn #mut_name(&self) -> &mut [#elem] {
+                        pub fn #mut_name(&mut self) -> &mut [#elem] {
                             let __data = unsafe { self.to_account_view().borrow_unchecked_mut() };
                             let __zc = unsafe { &*(__data[#disc_len..].as_ptr() as *const #zc_name) };
                             let __start = #start_expr;
@@ -975,7 +974,7 @@ fn generate_dynamic_account(
             }
 
             #[inline(always)]
-            pub fn set_dynamic_fields(&self, __payer: &impl AsAccountView, #(#set_dyn_params),*) -> Result<(), ProgramError> {
+            pub fn set_dynamic_fields(&mut self, __payer: &impl AsAccountView, #(#set_dyn_params),*) -> Result<(), ProgramError> {
                 let __view = &self.__view;
                 let __data = unsafe { __view.borrow_unchecked() };
                 let __zc = unsafe { &*(__data[#disc_len..].as_ptr() as *const #zc_name) };
