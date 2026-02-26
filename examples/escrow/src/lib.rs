@@ -39,5 +39,4 @@ mod quasar_escrow {
         ctx.accounts.emit_event()?;
         ctx.accounts.close_escrow()
     }
-
 }
