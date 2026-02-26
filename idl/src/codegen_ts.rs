@@ -41,15 +41,39 @@ pub fn generate_ts_client(idl: &Idl) -> String {
     }
 
     if used.contains("publicKey") {
-        codec_imports.push("getBytesCodec");
-        codec_imports.push("fixCodecSize");
-        codec_imports.push("transformCodec");
+        codec_imports.extend_from_slice(&[
+            "getBytesCodec",
+            "fixCodecSize",
+            "transformCodec",
+        ]);
     }
+
+    if has_dyn_string {
+        codec_imports.extend_from_slice(&[
+            "addCodecSizePrefix",
+            "fixCodecSize",
+            "getU16Codec",
+            "getUtf8Codec",
+        ]);
+    }
+
+    if has_dyn_vec {
+        codec_imports.extend_from_slice(&[
+            "type FixedSizeCodec",
+            "fixCodecSize",
+            "getArrayCodec",
+            "getU16Codec",
+        ]);
+    }
+
+    codec_imports.sort();
+    codec_imports.dedup();
 
     out.push_str(&format!(
         "import {{ {} }} from \"@solana/codecs\";\n",
         codec_imports.join(", ")
     ));
+
     out.push('\n');
 
     // --- PublicKey codec helper ---
@@ -567,59 +591,20 @@ const PUBLIC_KEY_CODEC_HELPER: &str = r#"function getPublicKeyCodec() {
 "#;
 
 const DYN_STRING_HELPER: &str = r#"function getDynStringCodec(maxLength: number) {
-  const fixedSize = 2 + maxLength;
-  return {
-    encode(value: string): Uint8Array {
-      const buf = new Uint8Array(fixedSize);
-      const view = new DataView(buf.buffer);
-      const encoded = new TextEncoder().encode(value);
-      view.setUint16(0, encoded.length, true);
-      buf.set(encoded, 2);
-      return buf;
-    },
-    decode(bytes: Uint8Array, offset = 0): [string, number] {
-      const view = new DataView(bytes.buffer, bytes.byteOffset + offset);
-      const len = view.getUint16(0, true);
-      const str = new TextDecoder().decode(
-        bytes.slice(offset + 2, offset + 2 + len),
-      );
-      return [str, offset + fixedSize];
-    },
-    fixedSize,
-  };
+    return fixCodecSize(
+        addCodecSizePrefix(getUtf8Codec(), getU16Codec()),
+        2 + maxLength,
+    );
 }
 "#;
 
-const DYN_VEC_HELPER: &str = r#"function getDynVecCodec<T>(
-  itemCodec: { encode(v: T): Uint8Array; decode(b: Uint8Array, o: number): [T, number]; fixedSize: number },
-  maxLength: number,
+const DYN_VEC_HELPER: &str = r#"function getDynVecCodec<TFrom, TTo extends TFrom = TFrom>(
+    itemCodec: FixedSizeCodec<TFrom, TTo>,
+    maxLength: number,
 ) {
-  const fixedSize = 2 + maxLength * itemCodec.fixedSize;
-  return {
-    encode(value: T[]): Uint8Array {
-      const buf = new Uint8Array(fixedSize);
-      const view = new DataView(buf.buffer);
-      view.setUint16(0, value.length, true);
-      let offset = 2;
-      for (const item of value) {
-        buf.set(itemCodec.encode(item), offset);
-        offset += itemCodec.fixedSize;
-      }
-      return buf;
-    },
-    decode(bytes: Uint8Array, offset = 0): [T[], number] {
-      const view = new DataView(bytes.buffer, bytes.byteOffset + offset);
-      const len = view.getUint16(0, true);
-      const items: T[] = [];
-      let pos = offset + 2;
-      for (let i = 0; i < len; i++) {
-        const [item, next] = itemCodec.decode(bytes, pos);
-        items.push(item);
-        pos = next;
-      }
-      return [items, offset + fixedSize];
-    },
-    fixedSize,
-  };
+    return fixCodecSize(
+        getArrayCodec(itemCodec, { size: getU16Codec() }),
+        2 + maxLength * itemCodec.fixedSize,
+    );
 }
 "#;
