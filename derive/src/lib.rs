@@ -17,6 +17,7 @@ use proc_macro::TokenStream;
 
 mod account;
 mod accounts;
+mod declare_program;
 mod error_code;
 mod event;
 mod helpers;
@@ -171,4 +172,34 @@ pub fn emit_cpi(input: TokenStream) -> TokenStream {
         self.program.emit_event(&#input, self.event_authority)
     }
     .into()
+}
+
+/// Declare an external program for CPI, generating typed helpers from its IDL.
+///
+/// Reads an IDL JSON file at compile time and generates:
+/// - A program account type with `Program` trait implementation
+/// - Free functions returning `CpiCall<'a, N, M>` for each instruction
+/// - Methods on the program type accepting `&impl AsAccountView` arguments
+///
+/// # Syntax
+///
+/// ```ignore
+/// quasar::declare_program!(
+///     my_program,
+///     "target/idl/my_program.idl.json"
+/// );
+///
+/// // Free function style:
+/// my_program::make(&program_view, &maker, &escrow, 100u64, 50u64).invoke()?;
+///
+/// // Method style (shared program reference):
+/// let program: &MyProgram = &ctx.accounts.my_program;
+/// program.make(&maker, &escrow, 100u64, 50u64).invoke()?;
+/// ```
+///
+/// The IDL path resolves relative to the calling crate's `CARGO_MANIFEST_DIR`.
+/// Only fixed-size argument types are supported (u8–u128, i8–i128, bool, pubkey).
+#[proc_macro]
+pub fn declare_program(input: TokenStream) -> TokenStream {
+    declare_program::declare_program(input)
 }

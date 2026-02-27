@@ -147,7 +147,8 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
 }
 
 /// Check for discriminator collisions across all instruction, account, and event discriminators.
-fn check_discriminator_collisions(parsed: &ParsedProgram) {
+/// Returns a list of collision descriptions, empty if no collisions found.
+pub fn find_discriminator_collisions(parsed: &ParsedProgram) -> Vec<String> {
     struct DiscEntry {
         kind: &'static str,
         name: String,
@@ -201,6 +202,11 @@ fn check_discriminator_collisions(parsed: &ParsedProgram) {
         }
     }
 
+    collisions
+}
+
+fn check_discriminator_collisions(parsed: &ParsedProgram) {
+    let collisions = find_discriminator_collisions(parsed);
     if !collisions.is_empty() {
         eprintln!("Error: discriminator collisions detected:");
         for c in &collisions {

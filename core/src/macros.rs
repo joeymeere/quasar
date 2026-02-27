@@ -65,6 +65,15 @@ macro_rules! require_eq {
 }
 
 #[macro_export]
+macro_rules! require_keys_eq {
+    ($left:expr, $right:expr, $error:expr) => {
+        if !$crate::keys_eq(&$left, &$right) {
+            return Err($error.into());
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! emit {
     ($event:expr) => {
         $event.emit_log()

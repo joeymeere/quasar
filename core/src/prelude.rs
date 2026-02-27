@@ -31,8 +31,10 @@ pub use crate::return_data::set_return_data;
 pub use core::ops::{Deref, DerefMut};
 
 // Macros
-pub use crate::{dispatch, emit, no_alloc, panic_handler};
-pub use quasar_derive::{account, emit_cpi, error_code, event, instruction, program, Accounts};
+pub use crate::{dispatch, emit, no_alloc, panic_handler, require, require_eq, require_keys_eq};
+pub use quasar_derive::{
+    account, declare_program, emit_cpi, error_code, event, instruction, program, Accounts,
+};
 
 // External types
 pub use solana_account_view::AccountView;

@@ -1,7 +1,7 @@
 mod codegen;
 mod codegen_ts;
-mod parser;
-mod types;
+
+use quasar_idl::parser;
 
 use std::path::PathBuf;
 

@@ -84,3 +84,40 @@ pub mod return_data;
 pub mod traits;
 /// Utility functions
 pub mod utils;
+
+/// Branch-free 32-byte address comparison.
+///
+/// XOR-folds 8 bytes at a time — constant-time, avoids branch misprediction.
+/// Does not short-circuit: all 4 iterations always execute.
+#[inline(always)]
+pub fn keys_eq(a: &solana_address::Address, b: &solana_address::Address) -> bool {
+    let a: &[u8] = a.as_ref();
+    let b: &[u8] = b.as_ref();
+    let mut acc: u64 = 0;
+    let mut i = 0;
+    while i < 32 {
+        let va = u64::from_ne_bytes([
+            a[i],
+            a[i + 1],
+            a[i + 2],
+            a[i + 3],
+            a[i + 4],
+            a[i + 5],
+            a[i + 6],
+            a[i + 7],
+        ]);
+        let vb = u64::from_ne_bytes([
+            b[i],
+            b[i + 1],
+            b[i + 2],
+            b[i + 3],
+            b[i + 4],
+            b[i + 5],
+            b[i + 6],
+            b[i + 7],
+        ]);
+        acc |= va ^ vb;
+        i += 8;
+    }
+    acc == 0
+}

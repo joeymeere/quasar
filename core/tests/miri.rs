@@ -2256,3 +2256,34 @@ fn instruction_vec_arg_from_raw_parts_exact_boundary() {
     assert_eq!(slice[9].get(), 9);
     assert_eq!(slice[0].get(), 0);
 }
+
+// ===========================================================================
+// 12. Account::close — post-close rejection
+//
+// The basic close mechanics (lamport drain, owner reassign, data_len zero)
+// are tested above in close_transfers_lamports_and_zeroes_fields (section 11).
+// These tests verify that a closed account is properly REJECTED by the
+// validation pipeline — the security-critical invariant.
+// ===========================================================================
+
+#[test]
+fn close_rejected_by_from_account_view() {
+    // After close, Account::from_account_view must fail because
+    // the owner has been reassigned to the system program.
+    let mut buf = make_zc_buffer();
+    let view = unsafe { buf.view() };
+    let account = Account::<TestAccountType>::from_account_view_mut(&view).unwrap();
+
+    let mut dest_buf = AccountBuffer::new(0);
+    dest_buf.init([2u8; 32], [0u8; 32], 0, 0, false, true);
+    let dest_view = unsafe { dest_buf.view() };
+
+    assert!(account.close(&dest_view).is_ok());
+
+    // CheckOwner sees system program, expects TEST_OWNER — must reject
+    let result = Account::<TestAccountType>::from_account_view(&view);
+    assert!(
+        result.is_err(),
+        "from_account_view must reject a closed account (wrong owner)"
+    );
+}

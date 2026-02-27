@@ -1,6 +1,6 @@
-use crate::parser::accounts::RawAccountField;
-use crate::parser::helpers;
-use crate::parser::ParsedProgram;
+use quasar_idl::parser::accounts::RawAccountField;
+use quasar_idl::parser::helpers;
+use quasar_idl::parser::ParsedProgram;
 
 /// Generate Rust client source code from parsed program data.
 pub fn generate_client(parsed: &ParsedProgram) -> String {
