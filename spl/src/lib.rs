@@ -123,8 +123,8 @@ mod token_2022;
 
 pub use close::TokenClose;
 pub use constants::{SPL_TOKEN_ID, TOKEN_2022_ID};
-pub use cpi::TokenCpi;
-pub use init::{InitMint, InitToken};
+pub use cpi::{initialize_account3, TokenCpi};
+pub use init::{validate_token_account, InitMint, InitToken};
 pub use interface::{InterfaceMintAccount, InterfaceTokenAccount, TokenInterface};
 pub use state::{MintAccountState, TokenAccountState};
 pub use token::{MintAccount, TokenAccount, TokenProgram};

@@ -65,9 +65,33 @@ fn has_derive_accounts(attrs: &[syn::Attribute]) -> bool {
     false
 }
 
+fn has_writable_directive(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("account") {
+            continue;
+        }
+        let tokens_str = match attr.meta.require_list() {
+            Ok(list) => list.tokens.to_string(),
+            Err(_) => continue,
+        };
+        for directive in tokens_str.split(',') {
+            let d = directive.trim();
+            if d == "mut"
+                || d == "init"
+                || d == "init_if_needed"
+                || d.starts_with("close")
+                || d.starts_with("realloc")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn parse_account_field(field: &syn::Field, parent: &syn::ItemStruct) -> RawAccountField {
     let name = field.ident.as_ref().unwrap().to_string();
-    let writable = helpers::is_mut_ref(&field.ty);
+    let writable = helpers::is_mut_ref(&field.ty) || has_writable_directive(&field.attrs);
 
     // Collect sibling field names for seed reference detection
     let sibling_names: Vec<String> = match &parent.fields {

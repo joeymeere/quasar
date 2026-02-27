@@ -13,6 +13,38 @@ const SYNC_NATIVE: u8 = 17;
 const INITIALIZE_ACCOUNT3: u8 = 18;
 const INITIALIZE_MINT2: u8 = 20;
 
+/// Initialize a token account (InitializeAccount3 — opcode 18).
+///
+/// Free function variant for generated code that works with raw `AccountView`
+/// references during parse-time init. Equivalent to [`TokenCpi::initialize_account3`].
+#[inline(always)]
+#[allow(dead_code)]
+pub fn initialize_account3<'a>(
+    token_program: &'a AccountView,
+    account: &'a AccountView,
+    mint: &'a AccountView,
+    owner: &Address,
+) -> CpiCall<'a, 2, 33> {
+    // SAFETY: All 33 bytes are written before assume_init.
+    let data = unsafe {
+        let mut buf = core::mem::MaybeUninit::<[u8; 33]>::uninit();
+        let ptr = buf.as_mut_ptr() as *mut u8;
+        core::ptr::write(ptr, INITIALIZE_ACCOUNT3);
+        core::ptr::copy_nonoverlapping(owner.as_ref().as_ptr(), ptr.add(1), 32);
+        buf.assume_init()
+    };
+
+    CpiCall::new(
+        token_program.address(),
+        [
+            InstructionAccount::writable(account.address()),
+            InstructionAccount::readonly(mint.address()),
+        ],
+        [account, mint],
+        data,
+    )
+}
+
 /// Trait for types that can execute SPL Token CPI calls.
 ///
 /// Implemented by [`TokenProgram`], [`Token2022Program`], and [`TokenInterface`].

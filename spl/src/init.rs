@@ -3,16 +3,15 @@ use quasar_core::prelude::*;
 
 use crate::constants::{SPL_TOKEN_ID, TOKEN_2022_ID};
 use crate::cpi::TokenCpi;
+use crate::interface::{InterfaceMintAccount, InterfaceTokenAccount};
+use crate::state::{MintAccountState, TokenAccountState};
+use crate::token::{MintAccount, TokenAccount};
+use crate::token_2022::{Mint2022Account, Token2022Account};
 
 #[inline(always)]
 fn is_token_program_owner(view: &AccountView) -> bool {
     view.owned_by(&SPL_TOKEN_ID) || view.owned_by(&TOKEN_2022_ID)
 }
-use crate::interface::InterfaceMintAccount;
-use crate::interface::InterfaceTokenAccount;
-use crate::state::{MintAccountState, TokenAccountState};
-use crate::token::{MintAccount, TokenAccount};
-use crate::token_2022::{Mint2022Account, Token2022Account};
 
 /// Extension trait providing `.init()` on `Initialize<T>` for token account types.
 ///
@@ -211,3 +210,35 @@ pub trait InitMint: AsAccountView + Sized {
 impl InitMint for Initialize<MintAccount> {}
 impl InitMint for Initialize<Mint2022Account> {}
 impl InitMint for Initialize<InterfaceMintAccount> {}
+
+/// Validate that an existing token account has the expected mint and authority.
+///
+/// Used by generated `#[account(init_if_needed, token::...)]` code when the
+/// account is already initialized.
+#[inline(always)]
+#[allow(dead_code)]
+pub fn validate_token_account(
+    view: &AccountView,
+    mint: &Address,
+    authority: &Address,
+) -> Result<(), ProgramError> {
+    if !is_token_program_owner(view) {
+        return Err(ProgramError::IllegalOwner);
+    }
+    if view.data_len() < TokenAccountState::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    // SAFETY: data_len >= 165 checked above, TokenAccountState is
+    // #[repr(C)] with alignment 1, pointer is to account data start.
+    let state = unsafe { &*(view.data_ptr() as *const TokenAccountState) };
+    if !state.is_initialized() {
+        return Err(ProgramError::UninitializedAccount);
+    }
+    if state.mint() != mint {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if state.owner() != authority {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(())
+}

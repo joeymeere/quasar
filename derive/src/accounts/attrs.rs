@@ -5,11 +5,20 @@ use syn::{
 
 pub(super) enum AccountDirective {
     Mut,
+    Init,
+    InitIfNeeded,
+    Close(Ident),
+    Payer(Ident),
+    Space(Expr),
     HasOne(Ident, Option<Expr>),
     Constraint(Expr, Option<Expr>),
     Seeds(Vec<Expr>),
     Bump(Option<Expr>),
     Address(Expr, Option<Expr>),
+    TokenMint(Ident),
+    TokenAuthority(Ident),
+    Realloc(Expr),
+    ReallocPayer(Ident),
 }
 
 impl Parse for AccountDirective {
@@ -20,6 +29,23 @@ impl Parse for AccountDirective {
         }
         let key: Ident = input.parse()?;
         match key.to_string().as_str() {
+            "init" => Ok(Self::Init),
+            "init_if_needed" => Ok(Self::InitIfNeeded),
+            "close" => {
+                let _: Token![=] = input.parse()?;
+                let ident: Ident = input.parse()?;
+                Ok(Self::Close(ident))
+            }
+            "payer" => {
+                let _: Token![=] = input.parse()?;
+                let ident: Ident = input.parse()?;
+                Ok(Self::Payer(ident))
+            }
+            "space" => {
+                let _: Token![=] = input.parse()?;
+                let expr: Expr = input.parse()?;
+                Ok(Self::Space(expr))
+            }
             "has_one" => {
                 let _: Token![=] = input.parse()?;
                 let ident: Ident = input.parse()?;
@@ -66,6 +92,47 @@ impl Parse for AccountDirective {
                     Ok(Self::Bump(None))
                 }
             }
+            "realloc" => {
+                if input.peek(Token![::]) {
+                    input.parse::<Token![::]>()?;
+                    let sub_key: Ident = input.parse()?;
+                    match sub_key.to_string().as_str() {
+                        "payer" => {
+                            let _: Token![=] = input.parse()?;
+                            let ident: Ident = input.parse()?;
+                            Ok(Self::ReallocPayer(ident))
+                        }
+                        _ => Err(syn::Error::new(
+                            sub_key.span(),
+                            format!("unknown realloc attribute: `realloc::{}`", sub_key),
+                        )),
+                    }
+                } else {
+                    let _: Token![=] = input.parse()?;
+                    let expr: Expr = input.parse()?;
+                    Ok(Self::Realloc(expr))
+                }
+            }
+            "token" => {
+                input.parse::<Token![::]>()?;
+                let sub_key: Ident = input.parse()?;
+                match sub_key.to_string().as_str() {
+                    "mint" => {
+                        let _: Token![=] = input.parse()?;
+                        let ident: Ident = input.parse()?;
+                        Ok(Self::TokenMint(ident))
+                    }
+                    "authority" => {
+                        let _: Token![=] = input.parse()?;
+                        let ident: Ident = input.parse()?;
+                        Ok(Self::TokenAuthority(ident))
+                    }
+                    _ => Err(syn::Error::new(
+                        sub_key.span(),
+                        format!("unknown token attribute: `token::{}`", sub_key),
+                    )),
+                }
+            }
             _ => Err(syn::Error::new(
                 key.span(),
                 format!("unknown account attribute: `{}`", key),
@@ -76,39 +143,75 @@ impl Parse for AccountDirective {
 
 pub(super) struct AccountFieldAttrs {
     pub is_mut: bool,
+    pub is_init: bool,
+    pub init_if_needed: bool,
+    pub close: Option<Ident>,
+    pub payer: Option<Ident>,
+    pub space: Option<Expr>,
     pub has_ones: Vec<(Ident, Option<Expr>)>,
     pub constraints: Vec<(Expr, Option<Expr>)>,
     pub seeds: Option<Vec<Expr>>,
     pub bump: Option<Option<Expr>>,
     pub address: Option<(Expr, Option<Expr>)>,
+    pub token_mint: Option<Ident>,
+    pub token_authority: Option<Ident>,
+    pub realloc: Option<Expr>,
+    pub realloc_payer: Option<Ident>,
 }
 
 impl Parse for AccountFieldAttrs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let directives = input.parse_terminated(AccountDirective::parse, Token![,])?;
         let mut is_mut = false;
+        let mut is_init = false;
+        let mut init_if_needed = false;
+        let mut close = None;
+        let mut payer = None;
+        let mut space = None;
         let mut has_ones = Vec::new();
         let mut constraints = Vec::new();
         let mut seeds = None;
         let mut bump = None;
         let mut address = None;
+        let mut token_mint = None;
+        let mut token_authority = None;
+        let mut realloc = None;
+        let mut realloc_payer = None;
         for d in directives {
             match d {
                 AccountDirective::Mut => is_mut = true,
+                AccountDirective::Init => is_init = true,
+                AccountDirective::InitIfNeeded => init_if_needed = true,
+                AccountDirective::Close(ident) => close = Some(ident),
+                AccountDirective::Payer(ident) => payer = Some(ident),
+                AccountDirective::Space(expr) => space = Some(expr),
                 AccountDirective::HasOne(ident, err) => has_ones.push((ident, err)),
                 AccountDirective::Constraint(expr, err) => constraints.push((expr, err)),
                 AccountDirective::Seeds(s) => seeds = Some(s),
                 AccountDirective::Bump(b) => bump = Some(b),
                 AccountDirective::Address(expr, err) => address = Some((expr, err)),
+                AccountDirective::TokenMint(ident) => token_mint = Some(ident),
+                AccountDirective::TokenAuthority(ident) => token_authority = Some(ident),
+                AccountDirective::Realloc(expr) => realloc = Some(expr),
+                AccountDirective::ReallocPayer(ident) => realloc_payer = Some(ident),
             }
         }
         Ok(Self {
             is_mut,
+            is_init,
+            init_if_needed,
+            close,
+            payer,
+            space,
             has_ones,
             constraints,
             seeds,
             bump,
             address,
+            token_mint,
+            token_authority,
+            realloc,
+            realloc_payer,
         })
     }
 }
@@ -121,10 +224,19 @@ pub(super) fn parse_field_attrs(field: &syn::Field) -> syn::Result<AccountFieldA
     }
     Ok(AccountFieldAttrs {
         is_mut: false,
+        is_init: false,
+        init_if_needed: false,
+        close: None,
+        payer: None,
+        space: None,
         has_ones: vec![],
         constraints: vec![],
         seeds: None,
         bump: None,
         address: None,
+        token_mint: None,
+        token_authority: None,
+        realloc: None,
+        realloc_payer: None,
     })
 }

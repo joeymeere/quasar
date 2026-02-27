@@ -36,7 +36,7 @@ pub trait Discriminator {
     const DISCRIMINATOR: &'static [u8];
 }
 
-/// Declares the expected byte size of an account's data (excluding discriminator).
+/// Declares the total byte size of an account's data (including discriminator prefix).
 ///
 /// Implemented by: `#[account]` derive macro.
 /// Used by: `create_account` CPI to allocate the correct account size.
@@ -76,6 +76,11 @@ pub trait AccountCount {
 pub trait ParseAccounts<'info>: Sized {
     type Bumps: Copy;
     fn parse(accounts: &'info [AccountView]) -> Result<(Self, Self::Bumps), ProgramError>;
+
+    #[inline(always)]
+    fn epilogue(&self) -> Result<(), ProgramError> {
+        Ok(())
+    }
 }
 
 /// Convert a typed account wrapper to its underlying [`AccountView`].
@@ -88,6 +93,13 @@ pub trait AsAccountView {
     #[inline(always)]
     fn address(&self) -> &Address {
         self.to_account_view().address()
+    }
+}
+
+impl AsAccountView for AccountView {
+    #[inline(always)]
+    fn to_account_view(&self) -> &AccountView {
+        self
     }
 }
 

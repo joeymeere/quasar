@@ -185,7 +185,9 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     let has_any_checks = !pf.has_one_checks.is_empty()
         || !pf.constraint_checks.is_empty()
         || !pf.mut_checks.is_empty()
-        || !pf.pda_checks.is_empty();
+        || !pf.pda_checks.is_empty()
+        || !pf.init_pda_checks.is_empty()
+        || !pf.init_blocks.is_empty();
 
     let seed_addr_captures = &pf.seed_addr_captures;
     let bump_init_vars = &pf.bump_init_vars;
@@ -194,6 +196,14 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     let constraint_checks = &pf.constraint_checks;
     let pda_checks = &pf.pda_checks;
     let field_constructs = &pf.field_constructs;
+    let init_pda_checks = &pf.init_pda_checks;
+    let init_blocks = &pf.init_blocks;
+
+    let rent_fetch = if pf.needs_rent {
+        quote! { let __shared_rent = <quasar_core::sysvars::rent::Rent as quasar_core::sysvars::Sysvar>::get()?; }
+    } else {
+        quote! {}
+    };
 
     let parse_body = if has_composites {
         if has_any_checks {
@@ -203,12 +213,14 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                 }
                 #(#field_lets)*
                 #(#seed_addr_captures)*
+                #(#bump_init_vars)*
+                #(#init_pda_checks)*
+                #rent_fetch
+                #(#init_blocks)*
 
                 let result = Self {
                     #(#non_composite_constructs,)*
                 };
-
-                #(#bump_init_vars)*
 
                 {
                     let Self { #(ref #field_names,)* } = result;
@@ -239,12 +251,14 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             };
 
             #(#seed_addr_captures)*
+            #(#bump_init_vars)*
+            #(#init_pda_checks)*
+            #rent_fetch
+            #(#init_blocks)*
 
             let result = Self {
                 #(#field_constructs,)*
             };
-
-            #(#bump_init_vars)*
 
             {
                 let Self { #(ref #field_names,)* } = result;
@@ -285,6 +299,27 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     let client_macro = client::generate_client_macro(name, fields, &pf.field_attrs);
 
+    // --- Epilogue generation ---
+
+    let epilogue_method = if !pf.close_fields.is_empty() {
+        let close_stmts: Vec<proc_macro2::TokenStream> = pf
+            .close_fields
+            .iter()
+            .map(|(field, dest)| {
+                quote! { self.#field.close(self.#dest.to_account_view())?; }
+            })
+            .collect();
+        quote! {
+            #[inline(always)]
+            fn epilogue(&self) -> Result<(), ProgramError> {
+                #(#close_stmts)*
+                Ok(())
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     // --- Final output ---
 
     let expanded = quote! {
@@ -297,6 +332,8 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             fn parse(accounts: &'info [AccountView]) -> Result<(Self, Self::Bumps), ProgramError> {
                 #parse_body
             }
+
+            #epilogue_method
         }
 
         #seeds_impl

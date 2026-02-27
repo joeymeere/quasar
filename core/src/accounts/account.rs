@@ -30,7 +30,20 @@ pub fn realloc_account(
         payer.set_lamports(payer.lamports() + excess);
     }
 
+    let old_len = view.data_len();
     view.resize(new_space)?;
+
+    // Zero trailing bytes on shrink to prevent data leakage if the account
+    // is later re-grown — the runtime does not zero the realloc region.
+    if new_space < old_len {
+        // SAFETY: After resize, data_ptr() is valid for new_space bytes, but the
+        // underlying buffer retains old_len capacity. The bytes in [new_space..old_len]
+        // are within the account's allocated buffer and safe to zero.
+        unsafe {
+            core::ptr::write_bytes(view.data_ptr().add(new_space), 0, old_len - new_space);
+        }
+    }
+
     Ok(())
 }
 

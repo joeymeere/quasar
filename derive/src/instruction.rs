@@ -290,6 +290,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let __result: Result<#ok_ty, ProgramError> = (|| { #user_body })();
                 match __result {
                     Ok(ref __val) => {
+                        #param_ident.accounts.epilogue()?;
                         let __bytes = unsafe {
                             core::slice::from_raw_parts(
                                 __val as *const #ok_ty as *const u8,
@@ -305,7 +306,13 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         ));
         func.block.stmts = new_stmts;
     } else {
-        func.block.stmts = new_stmts.into_iter().chain(stmts).collect();
+        let user_body: proc_macro2::TokenStream = stmts.iter().map(|s| quote!(#s)).collect();
+        new_stmts.push(syn::parse_quote!({
+            let __user_result: Result<(), ProgramError> = { #user_body };
+            __user_result?;
+            #param_ident.accounts.epilogue()
+        }));
+        func.block.stmts = new_stmts;
     }
 
     quote!(#func).into()
