@@ -6,7 +6,7 @@ pub mod module_resolver;
 pub mod program;
 pub mod state;
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use crate::types::*;
 
@@ -84,6 +84,7 @@ pub fn parse_program(crate_root: &Path) -> ParsedProgram {
 pub fn build_idl(parsed: ParsedProgram) -> Idl {
     // Check for discriminator collisions across instructions, accounts, and events
     check_discriminator_collisions(&parsed);
+    check_instruction_input_name_collision(&parsed);
 
     let instructions: Vec<IdlInstruction> = parsed
         .instructions
@@ -143,6 +144,57 @@ pub fn build_idl(parsed: ParsedProgram) -> Idl {
         events: event_defs,
         types: type_defs,
         errors: parsed.errors,
+    }
+}
+
+fn check_instruction_input_name_collision(parsed: &ParsedProgram) {
+    let mut issues = Vec::new();
+
+    for ix in &parsed.instructions {
+        let accounts_struct = parsed
+            .accounts_structs
+            .iter()
+            .find(|s| s.name == ix.accounts_type_name);
+
+        let mut input_field_sources: HashMap<String, Vec<&'static str>> = HashMap::new();
+
+        if let Some(accounts_struct) = accounts_struct {
+            for field in &accounts_struct.fields {
+                let name = helpers::to_camel_case(&field.name);
+
+                // Only user-provided accounts are part of InstructionInput.
+                if field.pda.is_none() && field.address.is_none() {
+                    // Duplicate checks are scoped to fields that end up in InstructionInput.
+                    input_field_sources.entry(name).or_default().push("account");
+                }
+            }
+        }
+
+        for (name, _) in &ix.args {
+            let name = helpers::to_camel_case(name);
+
+            // Instruction args are always part of InstructionInput.
+            input_field_sources.entry(name).or_default().push("arg");
+        }
+
+        for (name, sources) in input_field_sources {
+            if sources.len() > 1 {
+                issues.push(format!(
+                    "  instruction '{}' has duplicate input field '{}' from {}",
+                    ix.name,
+                    name,
+                    sources.join(" + "),
+                ));
+            }
+        }
+    }
+
+    if !issues.is_empty() {
+        eprintln!("Error: duplicate instruction input field names detected:");
+        for issue in &issues {
+            eprintln!("{}", issue);
+        }
+        std::process::exit(1);
     }
 }
 

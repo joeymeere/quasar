@@ -156,6 +156,36 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         out.push_str("}\n\n");
     }
 
+    // Instruction input interfaces
+    for ix in &idl.instructions {
+        let user_accs: Vec<_> = ix
+            .accounts
+            .iter()
+            .filter(|a| a.pda.is_none() && a.address.is_none())
+            .collect();
+
+        if user_accs.is_empty() && ix.args.is_empty() {
+            continue;
+        }
+
+        let pascal = snake_to_pascal(&ix.name);
+
+        out.push_str(&format!("export interface {pascal}InstructionInput {{\n"));
+
+        if !user_accs.is_empty() {
+            for acc in &user_accs {
+                out.push_str(&format!("  {}: Address;\n", acc.name));
+            }
+        }
+        if !ix.args.is_empty() {
+            for arg in &ix.args {
+                out.push_str(&format!("  {}: {};\n", arg.name, ts_type(&arg.ty)));
+            }
+        }
+
+        out.push_str("}\n\n");
+    }
+
     // === Codecs ===
     out.push_str("/* Codecs */\n");
     for type_def in &idl.types {
@@ -331,27 +361,53 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         out.push('\n');
         let pascal = snake_to_pascal(&ix.name);
 
-        // Separate accounts into user-provided, fixed-address, and PDA
-        let user_accs: Vec<_> = ix
-            .accounts
-            .iter()
-            .filter(|a| a.pda.is_none() && a.address.is_none())
-            .collect();
-        // Method signature — raw arguments
-        out.push_str(&format!("  create{}Instruction(\n", pascal));
-        for acc in &user_accs {
-            out.push_str(&format!("    {}: Address,\n", acc.name));
+        // Accounts used by instruction builders are handled in three categories:
+        // - user-provided: passed by caller via InstructionInput
+        // - fixed-address: resolved once and stored in accountsMap
+        // - PDA: derived with findProgramAddressSync and stored in accountsMap
+        let mut user_accs = Vec::new();
+        let mut has_non_input_accounts = false;
+        for acc in &ix.accounts {
+            if acc.pda.is_none() && acc.address.is_none() {
+                user_accs.push(acc);
+            } else {
+                has_non_input_accounts = true;
+            }
         }
-        for arg in &ix.args {
-            out.push_str(&format!("    {}: {},\n", arg.name, ts_type(&arg.ty)));
+
+        let input_account_names: HashSet<&str> =
+            user_accs.iter().map(|a| a.name.as_str()).collect();
+
+        // Map an account name to the generated TS expression that provides its value.
+        // User accounts come from input.<name>; fixed/PDA accounts, when they exist,
+        // come from accountsMap["name"].
+        let account_expr = |name: &str| {
+            if input_account_names.contains(name) {
+                format!("input.{name}")
+            } else {
+                format!("accountsMap[\"{}\"]", name)
+            }
+        };
+
+        // Method signature — interface arguments
+        let input_param = if user_accs.is_empty() && ix.args.is_empty() {
+            String::new()
+        } else {
+            format!("input: {pascal}InstructionInput")
+        };
+        out.push_str(&format!(
+            "  create{pascal}Instruction({input_param}): TransactionInstruction {{\n"
+        ));
+
+        if has_non_input_accounts {
+            out.push_str("    const accountsMap: Record<string, Address> = {};\n");
         }
-        out.push_str("  ): TransactionInstruction {\n");
 
         // Derive fixed-address accounts
         for acc in &ix.accounts {
             if let Some(addr) = &acc.address {
                 out.push_str(&format!(
-                    "    const {} = new Address(\"{}\");\n",
+                    "    accountsMap[\"{}\"] = new Address(\"{}\");\n",
                     acc.name, addr
                 ));
             }
@@ -361,7 +417,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         for acc in &ix.accounts {
             if let Some(pda) = &acc.pda {
                 out.push_str(&format!(
-                    "    const [{}] = Address.findProgramAddressSync(\n      [\n",
+                    "    accountsMap[\"{}\"] = Address.findProgramAddressSync(\n      [\n",
                     acc.name
                 ));
                 for seed in &pda.seeds {
@@ -374,11 +430,11 @@ pub fn generate_ts_client(idl: &Idl) -> String {
                             ));
                         }
                         IdlSeed::Account { path } => {
-                            out.push_str(&format!("        {}.toBytes(),\n", path));
+                            out.push_str(&format!("        {}.toBytes(),\n", account_expr(path)));
                         }
                     }
                 }
-                out.push_str("      ],\n      this.programId,\n    );\n");
+                out.push_str("      ],\n      this.programId,\n    )[0];\n");
             }
         }
 
@@ -386,7 +442,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         let disc_bytes: Vec<String> = ix.discriminator.iter().map(|b| b.to_string()).collect();
         if ix.args.is_empty() {
             out.push_str(&format!(
-                "    const data = Buffer.from([{}]);\n",
+                "    const ixData = Buffer.from([{}]);\n",
                 disc_bytes.join(", ")
             ));
         } else {
@@ -399,9 +455,13 @@ pub fn generate_ts_client(idl: &Idl) -> String {
                 ));
             }
             out.push_str("    ]);\n");
-            let arg_names: Vec<&str> = ix.args.iter().map(|a| a.name.as_str()).collect();
+            let arg_names: Vec<String> = ix
+                .args
+                .iter()
+                .map(|a| format!("{}: input.{}", a.name, a.name))
+                .collect();
             out.push_str(&format!(
-                "    const data = Buffer.from([{}, ...argsCodec.encode({{ {} }})]);\n",
+                "    const ixData = Buffer.from([{}, ...argsCodec.encode({{ {} }})]);\n",
                 disc_bytes.join(", "),
                 arg_names.join(", ")
             ));
@@ -413,7 +473,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         if !ix.accounts.is_empty() {
             out.push_str("      keys: [\n");
             for acc in &ix.accounts {
-                let pubkey_expr = &acc.name;
+                let pubkey_expr = account_expr(&acc.name);
                 out.push_str(&format!(
                     "        {{ pubkey: {}, isSigner: {}, isWritable: {} }},\n",
                     pubkey_expr, acc.signer, acc.writable
@@ -421,7 +481,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
             }
             out.push_str("      ],\n");
         }
-        out.push_str("      data,\n");
+        out.push_str("      data: ixData,\n");
         out.push_str("    });\n");
         out.push_str("  }\n");
     }
