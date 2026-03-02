@@ -229,4 +229,3 @@ impl<T: ZeroCopyDeref> core::ops::DerefMut for Account<T> {
         T::deref_from_mut(&self.view)
     }
 }
-

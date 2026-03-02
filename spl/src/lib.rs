@@ -123,10 +123,10 @@ mod token;
 mod token_2022;
 
 pub use associated_token::{
-    create as ata_create, create_idempotent as ata_create_idempotent,
-    get_associated_token_address, get_associated_token_address_const,
-    get_associated_token_address_with_program, get_associated_token_address_with_program_const,
-    validate_ata, AssociatedToken, AssociatedTokenProgram, InitAssociatedToken,
+    create as ata_create, create_idempotent as ata_create_idempotent, get_associated_token_address,
+    get_associated_token_address_const, get_associated_token_address_with_program,
+    get_associated_token_address_with_program_const, validate_ata, AssociatedToken,
+    AssociatedTokenProgram, InitAssociatedToken,
 };
 pub use close::TokenClose;
 pub use constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID};

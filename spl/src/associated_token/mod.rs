@@ -72,10 +72,7 @@ pub fn get_associated_token_address_with_program(
 /// Const-compatible ATA address derivation (works off-chain and in const contexts).
 ///
 /// Uses `const_crypto` for SHA-256 and Ed25519 off-curve evaluation.
-pub const fn get_associated_token_address_const(
-    wallet: &Address,
-    mint: &Address,
-) -> (Address, u8) {
+pub const fn get_associated_token_address_const(wallet: &Address, mint: &Address) -> (Address, u8) {
     get_associated_token_address_with_program_const(wallet, mint, &SPL_TOKEN_ID)
 }
 
@@ -257,7 +254,11 @@ pub trait InitAssociatedToken: AsAccountView + Sized {
             )
             .invoke()
         } else {
-            validate_token_account(view, mint.to_account_view().address(), wallet.to_account_view().address())
+            validate_token_account(
+                view,
+                mint.to_account_view().address(),
+                wallet.to_account_view().address(),
+            )
         }
     }
 }

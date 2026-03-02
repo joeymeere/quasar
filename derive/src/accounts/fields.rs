@@ -313,9 +313,7 @@ pub(super) fn process_fields(
         }
 
         // associated_token::token_program requires associated_token::mint
-        if attrs.associated_token_token_program.is_some()
-            && attrs.associated_token_mint.is_none()
-        {
+        if attrs.associated_token_token_program.is_some() && attrs.associated_token_mint.is_none() {
             return Err(syn::Error::new_spanned(
                 field_name,
                 "`associated_token::token_program` requires `associated_token::mint` and `associated_token::authority`",
@@ -630,12 +628,11 @@ pub(super) fn process_fields(
                     .unwrap_or_else(|| token_program_field.unwrap());
 
                 // Token program address for ATA derivation
-                let token_program_addr =
-                    if let Some(tp) = &attrs.associated_token_token_program {
-                        quote! { #tp.address() }
-                    } else {
-                        quote! { &quasar_spl::SPL_TOKEN_ID }
-                    };
+                let token_program_addr = if let Some(tp) = &attrs.associated_token_token_program {
+                    quote! { #tp.address() }
+                } else {
+                    quote! { &quasar_spl::SPL_TOKEN_ID }
+                };
 
                 if attrs.init_if_needed {
                     init_blocks.push(quote! {
@@ -805,12 +802,11 @@ pub(super) fn process_fields(
         if !is_init_field && attrs.associated_token_mint.is_some() {
             let mint_field = attrs.associated_token_mint.as_ref().unwrap();
             let auth_field = attrs.associated_token_authority.as_ref().unwrap();
-            let token_program_addr =
-                if let Some(tp) = &attrs.associated_token_token_program {
-                    quote! { #tp.to_account_view().address() }
-                } else {
-                    quote! { &quasar_spl::SPL_TOKEN_ID }
-                };
+            let token_program_addr = if let Some(tp) = &attrs.associated_token_token_program {
+                quote! { #tp.to_account_view().address() }
+            } else {
+                quote! { &quasar_spl::SPL_TOKEN_ID }
+            };
 
             pda_checks.push(quote! {
                 quasar_spl::validate_ata(
