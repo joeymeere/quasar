@@ -1,7 +1,4 @@
-use {
-    crate::config::QuasarConfig,
-    std::path::PathBuf,
-};
+use {crate::config::QuasarConfig, std::path::PathBuf};
 
 /// Find the compiled .so in target/deploy/ (and optionally target/profile/).
 pub fn find_so(config: &QuasarConfig, include_profile: bool) -> Option<PathBuf> {

@@ -235,7 +235,8 @@ pub fn run_state(name: &str) -> CliResult {
 
         let next_disc = max_disc + 1;
         let new_struct = format!(
-            "\n#[account(discriminator = {next_disc})]\npub struct {pascal} {{\n    pub authority: Address,\n}}\n"
+            "\n#[account(discriminator = {next_disc})]\npub struct {pascal} {{\n    pub \
+             authority: Address,\n}}\n"
         );
 
         let updated = format!("{existing}{new_struct}");
@@ -287,9 +288,7 @@ pub fn run_error(name: &str) -> CliResult {
     if already_exists {
         let existing = fs::read_to_string(&errors_path).map_err(anyhow::Error::from)?;
 
-        let new_enum = format!(
-            "\n#[error_code]\npub enum {pascal} {{\n    Unknown,\n}}\n"
-        );
+        let new_enum = format!("\n#[error_code]\npub enum {pascal} {{\n    Unknown,\n}}\n");
 
         let updated = format!("{existing}{new_enum}");
         fs::write(&errors_path, updated).map_err(anyhow::Error::from)?;
@@ -314,4 +313,3 @@ pub enum {pascal} {{
 
     Ok(())
 }
-

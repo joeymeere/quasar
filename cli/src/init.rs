@@ -404,8 +404,14 @@ pub fn run(
     // Project name
     let name: String = if skip_prompts {
         name.unwrap_or_else(|| {
-            eprintln!("  {}", crate::style::fail("a project name is required when using flags"));
-            eprintln!("  {}", crate::style::dim("usage: quasar init <name> [--framework ...] [--template ...]"));
+            eprintln!(
+                "  {}",
+                crate::style::fail("a project name is required when using flags")
+            );
+            eprintln!(
+                "  {}",
+                crate::style::dim("usage: quasar init <name> [--framework ...] [--template ...]")
+            );
             std::process::exit(1);
         })
     } else {
@@ -484,13 +490,7 @@ pub fn run(
     let framework_idx = if skip_prompts {
         framework_default
     } else {
-        let framework_items = &[
-            "None",
-            "Rust",
-            "TypeScript",
-            "Kit",
-            "Rust (Mollusk)",
-        ];
+        let framework_items = &["None", "Rust", "TypeScript", "Kit", "Rust (Mollusk)"];
         Select::with_theme(&theme)
             .with_prompt("Testing framework")
             .items(framework_items)

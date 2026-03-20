@@ -33,7 +33,10 @@ pub fn run(all: bool) -> CliResult {
             .map_err(anyhow::Error::from)?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("  {}", style::fail(&format!("cargo clean failed: {}", stderr.trim())));
+            eprintln!(
+                "  {}",
+                style::fail(&format!("cargo clean failed: {}", stderr.trim()))
+            );
             std::process::exit(1);
         }
     }

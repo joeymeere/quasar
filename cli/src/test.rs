@@ -19,7 +19,12 @@ pub fn run(
     run_once(debug, filter.as_deref(), no_build, features.as_deref())
 }
 
-fn run_once(debug: bool, filter: Option<&str>, no_build: bool, features: Option<&str>) -> CliResult {
+fn run_once(
+    debug: bool,
+    filter: Option<&str>,
+    no_build: bool,
+    features: Option<&str>,
+) -> CliResult {
     let config = QuasarConfig::load()?;
 
     if !no_build {
@@ -87,7 +92,12 @@ fn run_once(debug: bool, filter: Option<&str>, no_build: bool, features: Option<
     }
 }
 
-fn run_watch(debug: bool, filter: Option<String>, no_build: bool, features: Option<String>) -> CliResult {
+fn run_watch(
+    debug: bool,
+    filter: Option<String>,
+    no_build: bool,
+    features: Option<String>,
+) -> CliResult {
     if let Err(e) = run_once(debug, filter.as_deref(), no_build, features.as_deref()) {
         eprintln!("  {}", style::fail(&format!("{e}")));
     }

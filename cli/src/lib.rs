@@ -271,7 +271,9 @@ pub fn run(cli: Cli) -> CliResult {
             if cmd.instruction.is_none() && cmd.state.is_none() && cmd.error.is_none() {
                 eprintln!(
                     "  {}",
-                    style::fail("specify at least one of -i/--instruction, -s/--state, or -e/--error")
+                    style::fail(
+                        "specify at least one of -i/--instruction, -s/--state, or -e/--error"
+                    )
                 );
                 std::process::exit(1);
             }
@@ -287,7 +289,9 @@ pub fn run(cli: Cli) -> CliResult {
             Ok(())
         }
         Command::Build(cmd) => build::run(cmd.debug, cmd.watch, cmd.features),
-        Command::Test(cmd) => test::run(cmd.debug, cmd.filter, cmd.watch, cmd.no_build, cmd.features),
+        Command::Test(cmd) => {
+            test::run(cmd.debug, cmd.filter, cmd.watch, cmd.no_build, cmd.features)
+        }
         Command::Deploy(cmd) => deploy::run(
             cmd.program_keypair,
             cmd.upgrade_authority,

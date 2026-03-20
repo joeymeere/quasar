@@ -57,6 +57,10 @@ mod counter_program {
 
 Full documentation at **[quasar-lang.com](https://quasar-lang.com)**.
 
+## Contributing
+
+The best way to contribute now is playing with Quasar. Build programs, test them and if you found any bug or areas to improve, please open an Issue. We still on a unstable version that will be changing a lot. Check [Contributing](CONTRIBUTING.md)
+
 ## Workspace
 
 | Crate | Path | Purpose |
