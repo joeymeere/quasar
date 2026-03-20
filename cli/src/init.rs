@@ -804,7 +804,7 @@ solana-instruction = {{ version = "3.2.0", features = ["bincode"] }}
             out.push_str(&format!(
                 r#"
 [dev-dependencies]
-{client_dep}quasar-svm = {{ git = "https://github.com/blueshift-gg/quasar-svm" }}
+{client_dep}quasar-svm = "{{ version = "0.1" }}"
 solana-account = {{ version = "3.4.0" }}
 solana-address = {{ version = "2.2.0", features = ["decode"] }}
 solana-instruction = {{ version = "3.2.0", features = ["bincode"] }}
@@ -905,7 +905,7 @@ fn generate_package_json(name: &str, framework: Framework) -> String {
     let solana_dep = if framework.is_kit() {
         "\"@solana/kit\": \"^6.0.0\""
     } else {
-        "\"@solana/web3.js\": \"github:blueshift-gg/web3.js#v2\""
+        "\"@solana/web3.js\": \"github:blueshift-gg/solana-web3.js#v2\""
     };
     format!(
         r#"{{
