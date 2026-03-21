@@ -66,7 +66,7 @@ fn read_config_field(field: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Thin wrapper around ed25519-dalek SigningKey that implements solana Signer.
-pub struct Keypair(pub SigningKey);
+pub struct Keypair(SigningKey);
 
 impl Keypair {
     /// Read a Solana keypair JSON file (array of 64 bytes).
@@ -121,6 +121,10 @@ pub fn get_latest_blockhash(rpc_url: &str) -> Result<Hash, crate::error::CliErro
         .body_mut()
         .read_json()
         .map_err(anyhow::Error::from)?;
+
+    if let Some(err) = resp.get("error") {
+        return Err(anyhow::anyhow!("RPC error: {}", err).into());
+    }
 
     let hash_str = resp["result"]["value"]["blockhash"]
         .as_str()
@@ -178,6 +182,10 @@ pub fn get_account_data(
         .body_mut()
         .read_json()
         .map_err(anyhow::Error::from)?;
+
+    if let Some(err) = resp.get("error") {
+        return Err(anyhow::anyhow!("RPC error: {}", err).into());
+    }
 
     let value = &resp["result"]["value"];
     if value.is_null() {

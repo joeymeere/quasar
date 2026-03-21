@@ -62,6 +62,13 @@ pub fn run(
         let prog_bytes: Vec<u8> =
             serde_json::from_str(&std::fs::read_to_string(&prog_keypair_path)?)
                 .map_err(anyhow::Error::from)?;
+        if prog_bytes.len() != 64 {
+            return Err(anyhow::anyhow!(
+                "program keypair must contain exactly 64 bytes, got {}",
+                prog_bytes.len()
+            )
+            .into());
+        }
         let program_id =
             solana_address::Address::from(<[u8; 32]>::try_from(&prog_bytes[32..64]).unwrap());
 
