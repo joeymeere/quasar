@@ -62,7 +62,7 @@ pub fn run(
         eprintln!();
         eprintln!(
             "  Run {} to generate one, or pass {} explicitly.",
-            style::bold("quasar build"),
+            style::bold("quasar keys new"),
             style::bold("--program-keypair")
         );
         eprintln!();
