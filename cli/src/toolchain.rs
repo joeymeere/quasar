@@ -1,9 +1,6 @@
 use {
     crate::style,
-    std::{
-        path::Path,
-        process::Command,
-    },
+    std::{path::Path, process::Command},
 };
 
 // ---------------------------------------------------------------------------
@@ -16,14 +13,21 @@ pub struct ToolchainRequirements {
     pub rust_version: &'static str,
 }
 
-/// Compatibility matrix: maps quasar-lang versions to required toolchain versions.
-/// Updated with each CLI release.
+/// Compatibility matrix: maps quasar-lang versions to required toolchain
+/// versions. Updated with each CLI release.
 ///
 /// `solana_version` is a concrete installable version (e.g. "2.1.21").
-/// Comparison uses major.minor only — any 2.1.x satisfies a "2.1.21" requirement.
-/// `rust_version` is a minimum version (e.g. "1.87.0" means >= 1.87.0).
+/// Comparison uses major.minor only — any 2.1.x satisfies a "2.1.21"
+/// requirement. `rust_version` is a minimum version (e.g. "1.87.0" means >=
+/// 1.87.0).
 const COMPAT_TABLE: &[(&str, ToolchainRequirements)] = &[
-    ("0.0.0", ToolchainRequirements { solana_version: "3.0.0", rust_version: "1.87.0" }),
+    (
+        "0.0.0",
+        ToolchainRequirements {
+            solana_version: "3.0.0",
+            rust_version: "1.87.0",
+        },
+    ),
     // ("0.1.0", ToolchainRequirements { solana_version: "3.1.0", rust_version: "1.87.0" }),
 ];
 
@@ -45,8 +49,9 @@ pub fn requirements_for(quasar_lang_version: &str) -> Option<&'static ToolchainR
 // ---------------------------------------------------------------------------
 
 /// Read the quasar-lang version from a project's Cargo.toml.
-/// Looks for `quasar-lang = "X.Y.Z"` or `quasar-lang = { version = "X.Y.Z", ... }`.
-/// Falls back to Cargo.lock if Cargo.toml doesn't have a pinned version (e.g. git dep).
+/// Looks for `quasar-lang = "X.Y.Z"` or `quasar-lang = { version = "X.Y.Z", ...
+/// }`. Falls back to Cargo.lock if Cargo.toml doesn't have a pinned version
+/// (e.g. git dep).
 pub fn detect_quasar_lang_version(project_root: &Path) -> Option<String> {
     if let Some(v) = read_version_from_cargo_toml(project_root) {
         return Some(v);
@@ -87,10 +92,7 @@ fn read_version_from_cargo_lock(project_root: &Path) -> Option<String> {
 
 /// Get the installed Solana CLI version (e.g. "2.1.6").
 pub fn installed_solana_version() -> Option<String> {
-    let output = Command::new("solana")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = Command::new("solana").arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -103,10 +105,7 @@ pub fn installed_solana_version() -> Option<String> {
 
 /// Get the installed Rust compiler version (e.g. "1.87.0").
 pub fn installed_rust_version() -> Option<String> {
-    let output = Command::new("rustc")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = Command::new("rustc").arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -141,9 +140,7 @@ pub fn ensure_toolchain(project_root: &Path) {
                 "  {} quasar-lang v{version} is not recognized by this CLI version.",
                 style::warn(""),
             );
-            eprintln!(
-                "    Could not auto-switch Solana and Rust versions."
-            );
+            eprintln!("    Could not auto-switch Solana and Rust versions.");
             eprintln!(
                 "    Run {} to get the latest toolchain mappings.",
                 style::bold("quasar update")
@@ -158,7 +155,8 @@ pub fn ensure_toolchain(project_root: &Path) {
         Some(ref installed) => {
             eprintln!();
             eprintln!(
-                "  {} Switching Solana CLI: v{installed} -> v{} (required by quasar-lang v{version})",
+                "  {} Switching Solana CLI: v{installed} -> v{} (required by quasar-lang \
+                 v{version})",
                 style::dim(""),
                 reqs.solana_version,
             );

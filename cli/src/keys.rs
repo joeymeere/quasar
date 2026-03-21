@@ -31,7 +31,8 @@ fn read_program_id(path: &PathBuf) -> Result<String, crate::error::CliError> {
     Ok(bs58::encode(&bytes[32..64]).into_string())
 }
 
-/// Find the current `declare_id!("...")` value in src/lib.rs using the IDL parser.
+/// Find the current `declare_id!("...")` value in src/lib.rs using the IDL
+/// parser.
 fn current_program_id() -> Option<String> {
     let source = fs::read_to_string("src/lib.rs").ok()?;
     let file = syn::parse_file(&source).ok()?;
@@ -93,10 +94,7 @@ pub fn sync() -> CliResult {
     let current_id = match current_program_id() {
         Some(id) => id,
         None => {
-            eprintln!(
-                "  {}",
-                style::fail("declare_id!() not found in src/lib.rs")
-            );
+            eprintln!("  {}", style::fail("declare_id!() not found in src/lib.rs"));
             std::process::exit(1);
         }
     };
@@ -167,10 +165,7 @@ pub fn new(force: bool) -> CliResult {
         if let Some(current_id) = current_program_id() {
             if current_id != id {
                 replace_program_id(&current_id, &id)?;
-                println!(
-                    "  {} declare_id!() updated",
-                    style::success("Synced:"),
-                );
+                println!("  {} declare_id!() updated", style::success("Synced:"),);
             }
         }
     }

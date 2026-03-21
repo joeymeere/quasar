@@ -31,10 +31,7 @@ pub fn run() -> CliResult {
     let version = match toolchain::detect_quasar_lang_version(Path::new(".")) {
         Some(v) => v,
         None => {
-            eprintln!(
-                "  {}",
-                style::fail("Could not detect quasar-lang version.")
-            );
+            eprintln!("  {}", style::fail("Could not detect quasar-lang version."));
             eprintln!();
             eprintln!("  Is this a Quasar project?");
             std::process::exit(1);
@@ -42,10 +39,7 @@ pub fn run() -> CliResult {
     };
 
     println!();
-    println!(
-        "  {} quasar-lang v{version}",
-        style::dim("Detected:"),
-    );
+    println!("  {} quasar-lang v{version}", style::dim("Detected:"),);
 
     match toolchain::requirements_for(&version) {
         Some(reqs) => {
@@ -57,33 +51,21 @@ pub fn run() -> CliResult {
             );
         }
         None => {
-            println!(
-                "  {} unknown (run quasar update)",
-                style::dim("Required:"),
-            );
+            println!("  {} unknown (run quasar update)", style::dim("Required:"),);
         }
     }
 
     if let Some(ref installed) = toolchain::installed_solana_version() {
-        println!(
-            "  {} Solana CLI v{installed}",
-            style::dim("Installed:"),
-        );
+        println!("  {} Solana CLI v{installed}", style::dim("Installed:"),);
     }
     if let Some(ref installed) = toolchain::installed_rust_version() {
-        println!(
-            "  {}  Rust v{installed}",
-            style::dim("Installed:"),
-        );
+        println!("  {}  Rust v{installed}", style::dim("Installed:"),);
     }
     println!();
 
     toolchain::ensure_toolchain(Path::new("."));
 
-    println!(
-        "  {}",
-        style::success("Toolchain is ready.")
-    );
+    println!("  {}", style::success("Toolchain is ready."));
     println!();
 
     Ok(())

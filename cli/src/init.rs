@@ -545,7 +545,14 @@ pub fn run(
         );
     }
 
-    scaffold(&name, &crate_name, toolchain, framework, template, crate::toolchain::LATEST_KNOWN_VERSION)?;
+    scaffold(
+        &name,
+        &crate_name,
+        toolchain,
+        framework,
+        template,
+        crate::toolchain::LATEST_KNOWN_VERSION,
+    )?;
 
     // git init (unless --no-git or already in a git repo)
     if !no_git {
@@ -755,7 +762,12 @@ fn scaffold(
 // Generators
 // ---------------------------------------------------------------------------
 
-fn generate_cargo_toml(name: &str, toolchain: Toolchain, framework: Framework, quasar_version: &str) -> String {
+fn generate_cargo_toml(
+    name: &str,
+    toolchain: Toolchain,
+    framework: Framework,
+    quasar_version: &str,
+) -> String {
     let mut out = format!(
         r#"[package]
 name = "{name}"

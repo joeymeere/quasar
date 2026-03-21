@@ -28,10 +28,7 @@ pub fn run() -> CliResult {
 
     match output {
         Ok(o) if o.status.success() => {
-            println!(
-                "  {}",
-                style::success("Quasar CLI updated successfully.")
-            );
+            println!("  {}", style::success("Quasar CLI updated successfully."));
             println!();
             let _ = Command::new("quasar").arg("--version").status();
             Ok(())

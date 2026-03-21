@@ -1,12 +1,16 @@
 use {
     crate::style,
     ed25519_dalek::SigningKey,
-    sha2::{Sha256, Digest},
+    sha2::{Digest, Sha256},
     solana_address::Address,
     solana_hash::Hash,
     solana_signature::Signature,
     solana_signer::{Signer, SignerError},
-    std::{fs, path::Path, process::{Command, Stdio}},
+    std::{
+        fs,
+        path::Path,
+        process::{Command, Stdio},
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -44,7 +48,13 @@ fn read_config_field(field: &str) -> Option<String> {
         let line = line.trim();
         let prefix = format!("{field}:");
         if line.starts_with(&prefix) {
-            Some(line[prefix.len()..].trim().trim_matches('\'').trim_matches('"').to_string())
+            Some(
+                line[prefix.len()..]
+                    .trim()
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string(),
+            )
         } else {
             None
         }
@@ -101,7 +111,7 @@ impl Signer for Keypair {
 /// Fetch the latest blockhash from the RPC.
 pub fn get_latest_blockhash(rpc_url: &str) -> Result<Hash, crate::error::CliError> {
     let resp: serde_json::Value = ureq::post(rpc_url)
-        .send_json(&serde_json::json!({
+        .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getLatestBlockhash",
@@ -126,15 +136,12 @@ pub fn get_latest_blockhash(rpc_url: &str) -> Result<Hash, crate::error::CliErro
 }
 
 /// Send a signed transaction to the RPC. Returns the signature string.
-pub fn send_transaction(
-    rpc_url: &str,
-    tx_bytes: &[u8],
-) -> Result<String, crate::error::CliError> {
-    use base64::{Engine, engine::general_purpose::STANDARD};
+pub fn send_transaction(rpc_url: &str, tx_bytes: &[u8]) -> Result<String, crate::error::CliError> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
     let encoded = STANDARD.encode(tx_bytes);
 
     let resp: serde_json::Value = ureq::post(rpc_url)
-        .send_json(&serde_json::json!({
+        .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "sendTransaction",
@@ -156,9 +163,12 @@ pub fn send_transaction(
 }
 
 /// Fetch account data as raw bytes. Returns None if account doesn't exist.
-pub fn get_account_data(rpc_url: &str, address: &Address) -> Result<Option<Vec<u8>>, crate::error::CliError> {
+pub fn get_account_data(
+    rpc_url: &str,
+    address: &Address,
+) -> Result<Option<Vec<u8>>, crate::error::CliError> {
     let resp: serde_json::Value = ureq::post(rpc_url)
-        .send_json(&serde_json::json!({
+        .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getAccountInfo",
@@ -178,8 +188,10 @@ pub fn get_account_data(rpc_url: &str, address: &Address) -> Result<Option<Vec<u
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing account data"))?;
 
-    use base64::{Engine, engine::general_purpose::STANDARD};
-    Ok(Some(STANDARD.decode(data_str).map_err(anyhow::Error::from)?))
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    Ok(Some(
+        STANDARD.decode(data_str).map_err(anyhow::Error::from)?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -187,22 +199,20 @@ pub fn get_account_data(rpc_url: &str, address: &Address) -> Result<Option<Vec<u
 // ---------------------------------------------------------------------------
 
 /// Squads v4 program ID — SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf.
-/// Verify with: `bs58::decode("SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf").into_vec()`
+/// Verify with:
+/// `bs58::decode("SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf").into_vec()`
 /// These bytes MUST be verified at implementation time via the test in Task 8.
 const SQUADS_PROGRAM_ID: Address = Address::new_from_array([
-    0x06, 0x81, 0xc4, 0xce, 0x47, 0xe2, 0x23, 0x68,
-    0xb8, 0xb1, 0x55, 0x5e, 0xc8, 0x87, 0xaf, 0x09,
-    0x2e, 0xfc, 0x7e, 0xfb, 0xb6, 0x6c, 0xa3, 0xf5,
-    0x2f, 0xbf, 0x68, 0xd4, 0xac, 0x9c, 0xb7, 0xa8,
+    0x06, 0x81, 0xc4, 0xce, 0x47, 0xe2, 0x23, 0x68, 0xb8, 0xb1, 0x55, 0x5e, 0xc8, 0x87, 0xaf, 0x09,
+    0x2e, 0xfc, 0x7e, 0xfb, 0xb6, 0x6c, 0xa3, 0xf5, 0x2f, 0xbf, 0x68, 0xd4, 0xac, 0x9c, 0xb7, 0xa8,
 ]);
 
 /// BPF Loader Upgradeable — BPFLoaderUpgradeab1e11111111111111111111111.
-/// Verify with: `bs58::decode("BPFLoaderUpgradeab1e11111111111111111111111").into_vec()`
+/// Verify with:
+/// `bs58::decode("BPFLoaderUpgradeab1e11111111111111111111111").into_vec()`
 const BPF_LOADER_UPGRADEABLE_ID: Address = Address::new_from_array([
-    0x02, 0xa8, 0xf6, 0x91, 0x4e, 0x88, 0xa1, 0xb0,
-    0xe2, 0x10, 0x15, 0x3e, 0xf7, 0x63, 0xae, 0x2b,
-    0x00, 0xc2, 0xb9, 0x3d, 0x16, 0xc1, 0x24, 0xd2,
-    0xc0, 0x53, 0x7a, 0x10, 0x04, 0x80, 0x00, 0x00,
+    0x02, 0xa8, 0xf6, 0x91, 0x4e, 0x88, 0xa1, 0xb0, 0xe2, 0x10, 0x15, 0x3e, 0xf7, 0x63, 0xae, 0x2b,
+    0x00, 0xc2, 0xb9, 0x3d, 0x16, 0xc1, 0x24, 0xd2, 0xc0, 0x53, 0x7a, 0x10, 0x04, 0x80, 0x00, 0x00,
 ]);
 
 /// System program ID.
@@ -211,17 +221,15 @@ const SYSTEM_PROGRAM_ID: Address = Address::new_from_array([0; 32]);
 /// Sysvar Rent — SysvarRent111111111111111111111111111111111.
 /// Matches `lang/src/sysvars/rent.rs` RENT_ID.
 const SYSVAR_RENT_ID: Address = Address::new_from_array([
-    6, 167, 213, 23, 25, 44, 92, 81, 33, 140, 201, 76,
-    61, 74, 241, 127, 88, 218, 238, 8, 155, 161, 253, 68,
-    227, 219, 217, 138, 0, 0, 0, 0,
+    6, 167, 213, 23, 25, 44, 92, 81, 33, 140, 201, 76, 61, 74, 241, 127, 88, 218, 238, 8, 155, 161,
+    253, 68, 227, 219, 217, 138, 0, 0, 0, 0,
 ]);
 
 /// Sysvar Clock — SysvarC1ock11111111111111111111111111111111.
 /// Matches `lang/src/sysvars/clock.rs` CLOCK_ID.
 const SYSVAR_CLOCK_ID: Address = Address::new_from_array([
-    6, 167, 213, 23, 24, 199, 116, 201, 40, 86, 99, 152,
-    105, 29, 94, 182, 139, 94, 184, 163, 155, 75, 109, 92,
-    115, 85, 91, 33, 0, 0, 0, 0,
+    6, 167, 213, 23, 24, 199, 116, 201, 40, 86, 99, 152, 105, 29, 94, 182, 139, 94, 184, 163, 155,
+    75, 109, 92, 115, 85, 91, 33, 0, 0, 0, 0,
 ]);
 
 pub fn vault_pda(multisig: &Address, vault_index: u8) -> (Address, u8) {
@@ -233,7 +241,12 @@ pub fn vault_pda(multisig: &Address, vault_index: u8) -> (Address, u8) {
 
 pub fn transaction_pda(multisig: &Address, transaction_index: u64) -> (Address, u8) {
     Address::find_program_address(
-        &[b"multisig", multisig.as_ref(), b"transaction", &transaction_index.to_le_bytes()],
+        &[
+            b"multisig",
+            multisig.as_ref(),
+            b"transaction",
+            &transaction_index.to_le_bytes(),
+        ],
         &SQUADS_PROGRAM_ID,
     )
 }
@@ -241,8 +254,11 @@ pub fn transaction_pda(multisig: &Address, transaction_index: u64) -> (Address, 
 pub fn proposal_pda(multisig: &Address, transaction_index: u64) -> (Address, u8) {
     Address::find_program_address(
         &[
-            b"multisig", multisig.as_ref(), b"transaction",
-            &transaction_index.to_le_bytes(), b"proposal",
+            b"multisig",
+            multisig.as_ref(),
+            b"transaction",
+            &transaction_index.to_le_bytes(),
+            b"proposal",
         ],
         &SQUADS_PROGRAM_ID,
     )
@@ -256,7 +272,11 @@ pub fn programdata_pda(program_id: &Address) -> (Address, u8) {
 /// The field is at byte offset 78, u64 LE.
 pub fn read_transaction_index(account_data: &[u8]) -> Result<u64, crate::error::CliError> {
     if account_data.len() < 86 {
-        return Err(anyhow::anyhow!("multisig account data too short ({} bytes)", account_data.len()).into());
+        return Err(anyhow::anyhow!(
+            "multisig account data too short ({} bytes)",
+            account_data.len()
+        )
+        .into());
     }
     let bytes: [u8; 8] = account_data[78..86].try_into().unwrap();
     Ok(u64::from_le_bytes(bytes))
@@ -266,7 +286,8 @@ pub fn read_transaction_index(account_data: &[u8]) -> Result<u64, crate::error::
 // Instruction building
 // ---------------------------------------------------------------------------
 
-/// Compute an Anchor instruction discriminator: first 8 bytes of sha256("global:<name>").
+/// Compute an Anchor instruction discriminator: first 8 bytes of
+/// sha256("global:<name>").
 fn anchor_discriminator(name: &str) -> [u8; 8] {
     let mut hasher = Sha256::new();
     hasher.update(format!("global:{name}").as_bytes());
@@ -297,38 +318,45 @@ pub fn build_upgrade_message(
     // [6] clock sysvar (readonly)
     // [7] BPF loader upgradeable (readonly, program)
     let account_keys: Vec<&Address> = vec![
-        vault, &programdata, program_id, buffer, spill,
-        &SYSVAR_RENT_ID, &SYSVAR_CLOCK_ID, &BPF_LOADER_UPGRADEABLE_ID,
+        vault,
+        &programdata,
+        program_id,
+        buffer,
+        spill,
+        &SYSVAR_RENT_ID,
+        &SYSVAR_CLOCK_ID,
+        &BPF_LOADER_UPGRADEABLE_ID,
     ];
 
-    let num_signers: u8 = 1;            // vault
-    let num_writable_signers: u8 = 1;   // vault is writable
+    let num_signers: u8 = 1; // vault
+    let num_writable_signers: u8 = 1; // vault is writable
     let num_writable_non_signers: u8 = 4; // programdata, program, buffer, spill
 
     // BPF upgrade instruction data: u32 LE = 3 (Upgrade variant)
     let ix_data: [u8; 4] = [0x03, 0x00, 0x00, 0x00];
 
-    // Compiled instruction: program_id_index=7 (BPF loader), accounts=[1,2,3,4,5,6,0]
-    // Account order for upgrade(): programdata, program, buffer, spill, rent, clock, authority
+    // Compiled instruction: program_id_index=7 (BPF loader),
+    // accounts=[1,2,3,4,5,6,0] Account order for upgrade(): programdata,
+    // program, buffer, spill, rent, clock, authority
     let account_indexes: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 0];
 
     // Serialize TransactionMessage with SmallVec encoding
-    let mut msg = Vec::new();
-    msg.push(num_signers);
-    msg.push(num_writable_signers);
-    msg.push(num_writable_non_signers);
-
-    // account_keys: SmallVec<u8, Pubkey>
-    msg.push(account_keys.len() as u8);
+    let mut msg = vec![
+        num_signers,
+        num_writable_signers,
+        num_writable_non_signers,
+        // account_keys: SmallVec<u8, Pubkey>
+        account_keys.len() as u8,
+    ];
     for key in &account_keys {
         msg.extend_from_slice(key.as_ref());
     }
 
     // instructions: SmallVec<u8, CompiledInstruction>
     msg.push(1u8); // 1 instruction
-    // CompiledInstruction:
+                   // CompiledInstruction:
     msg.push(7u8); // program_id_index
-    // account_indexes: SmallVec<u8, u8>
+                   // account_indexes: SmallVec<u8, u8>
     msg.push(account_indexes.len() as u8);
     msg.extend_from_slice(&account_indexes);
     // data: SmallVec<u16, u8>
@@ -356,7 +384,7 @@ pub fn vault_transaction_create_ix(
     data.extend_from_slice(&discriminator);
     data.push(vault_index);
     data.push(0u8); // ephemeral_signers = 0
-    // transaction_message: Borsh Vec<u8> = u32 LE length + bytes
+                    // transaction_message: Borsh Vec<u8> = u32 LE length + bytes
     data.extend_from_slice(&(transaction_message.len() as u32).to_le_bytes());
     data.extend_from_slice(&transaction_message);
     data.push(0u8); // memo: Option<String> = None
@@ -441,10 +469,13 @@ pub fn write_buffer(
 ) -> Result<Address, crate::error::CliError> {
     let output = Command::new("solana")
         .args([
-            "program", "write-buffer",
+            "program",
+            "write-buffer",
             so_path.to_str().unwrap_or_default(),
-            "--keypair", keypair_path.to_str().unwrap_or_default(),
-            "--url", rpc_url,
+            "--keypair",
+            keypair_path.to_str().unwrap_or_default(),
+            "--url",
+            rpc_url,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -498,11 +529,19 @@ pub fn propose_upgrade(
     let sp = style::spinner("Uploading program buffer...");
     let buffer = write_buffer(so_path, keypair_path, rpc_url)?;
     sp.finish_and_clear();
-    println!("  {} Buffer: {}", style::dim("✓"), bs58::encode(buffer).into_string());
+    println!(
+        "  {} Buffer: {}",
+        style::dim("✓"),
+        bs58::encode(buffer).into_string()
+    );
 
     // 2. Read multisig state to get next transaction index
-    let account_data = get_account_data(rpc_url, multisig)?
-        .ok_or_else(|| anyhow::anyhow!("multisig account not found: {}", bs58::encode(multisig).into_string()))?;
+    let account_data = get_account_data(rpc_url, multisig)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "multisig account not found: {}",
+            bs58::encode(multisig).into_string()
+        )
+    })?;
     let current_index = read_transaction_index(&account_data)?;
     let next_index = current_index + 1;
 
@@ -516,7 +555,12 @@ pub fn propose_upgrade(
 
     // 5. Build Squads instructions
     let ix_create = vault_transaction_create_ix(
-        multisig, &transaction, &member, &member, vault_index, upgrade_msg,
+        multisig,
+        &transaction,
+        &member,
+        &member,
+        vault_index,
+        upgrade_msg,
     );
     let ix_propose = proposal_create_ix(multisig, &proposal, &member, &member, next_index);
     let ix_approve = proposal_approve_ix(multisig, &member, &proposal);
