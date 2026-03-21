@@ -6,6 +6,26 @@ use {
     },
 };
 
+/// Resolve the program keypair path, falling back to target/deploy/<name>-keypair.json.
+fn resolve_program_keypair(config: &QuasarConfig, program_keypair: Option<PathBuf>) -> PathBuf {
+    program_keypair.unwrap_or_else(|| {
+        let name = &config.project.name;
+        let default = PathBuf::from("target")
+            .join("deploy")
+            .join(format!("{}-keypair.json", name));
+        if !default.exists() {
+            let module = config.module_name();
+            let alt = PathBuf::from("target")
+                .join("deploy")
+                .join(format!("{module}-keypair.json"));
+            if alt.exists() {
+                return alt;
+            }
+        }
+        default
+    })
+}
+
 pub fn run(
     program_keypair: Option<PathBuf>,
     upgrade_authority: Option<PathBuf>,
@@ -35,7 +55,6 @@ pub fn run(
     });
 
     if let Some(multisig_addr) = &multisig {
-        // Parse multisig address
         let multisig_bytes: [u8; 32] = bs58::decode(multisig_addr)
             .into_vec()
             .map_err(|e| anyhow::anyhow!("invalid multisig address: {e}"))?
@@ -43,34 +62,8 @@ pub fn run(
             .map_err(|_| anyhow::anyhow!("multisig address must be 32 bytes"))?;
         let multisig_key = solana_address::Address::from(multisig_bytes);
 
-        // Read program ID from the program keypair (public key = bytes 32..64)
-        let prog_keypair_path = program_keypair.unwrap_or_else(|| {
-            let default = PathBuf::from("target")
-                .join("deploy")
-                .join(format!("{}-keypair.json", name));
-            if !default.exists() {
-                let module = config.module_name();
-                let alt = PathBuf::from("target")
-                    .join("deploy")
-                    .join(format!("{module}-keypair.json"));
-                if alt.exists() {
-                    return alt;
-                }
-            }
-            default
-        });
-        let prog_bytes: Vec<u8> =
-            serde_json::from_str(&std::fs::read_to_string(&prog_keypair_path)?)
-                .map_err(anyhow::Error::from)?;
-        if prog_bytes.len() != 64 {
-            return Err(anyhow::anyhow!(
-                "program keypair must contain exactly 64 bytes, got {}",
-                prog_bytes.len()
-            )
-            .into());
-        }
-        let program_id =
-            solana_address::Address::from(<[u8; 32]>::try_from(&prog_bytes[32..64]).unwrap());
+        let prog_keypair_path = resolve_program_keypair(&config, program_keypair);
+        let program_id = crate::multisig::read_program_id_from_keypair(&prog_keypair_path)?;
 
         let payer_path = crate::multisig::solana_keypair_path(keypair.as_deref());
         let rpc_url = crate::multisig::solana_rpc_url(url.as_deref());
@@ -86,22 +79,7 @@ pub fn run(
     }
 
     // Find the program keypair
-    let keypair_path = program_keypair.unwrap_or_else(|| {
-        let default = PathBuf::from("target")
-            .join("deploy")
-            .join(format!("{}-keypair.json", name));
-        if !default.exists() {
-            // Try module name (underscores)
-            let module = config.module_name();
-            let alt = PathBuf::from("target")
-                .join("deploy")
-                .join(format!("{module}-keypair.json"));
-            if alt.exists() {
-                return alt;
-            }
-        }
-        default
-    });
+    let keypair_path = resolve_program_keypair(&config, program_keypair);
 
     if !keypair_path.exists() {
         eprintln!(

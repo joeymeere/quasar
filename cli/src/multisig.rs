@@ -4,6 +4,7 @@ use {
     sha2::{Digest, Sha256},
     solana_address::Address,
     solana_hash::Hash,
+    solana_instruction::AccountMeta,
     solana_signature::Signature,
     solana_signer::{Signer, SignerError},
     std::{
@@ -48,17 +49,26 @@ fn read_config_field(field: &str) -> Option<String> {
         let line = line.trim();
         let prefix = format!("{field}:");
         if line.starts_with(&prefix) {
-            Some(
-                line[prefix.len()..]
-                    .trim()
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string(),
-            )
+            let value = line[prefix.len()..]
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_string();
+            Some(expand_tilde(&value))
         } else {
             None
         }
     })
+}
+
+/// Expand a leading `~` to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return format!("{}/{rest}", home.display());
+        }
+    }
+    path.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +407,6 @@ pub fn vault_transaction_create_ix(
     data.extend_from_slice(&transaction_message);
     data.push(0u8); // memo: Option<String> = None
 
-    use solana_instruction::AccountMeta;
     solana_instruction::Instruction {
         program_id: SQUADS_PROGRAM_ID,
         accounts: vec![
@@ -426,7 +435,6 @@ pub fn proposal_create_ix(
     data.extend_from_slice(&transaction_index.to_le_bytes());
     data.push(0u8); // draft = false (start as Active)
 
-    use solana_instruction::AccountMeta;
     solana_instruction::Instruction {
         program_id: SQUADS_PROGRAM_ID,
         accounts: vec![
@@ -452,7 +460,6 @@ pub fn proposal_approve_ix(
     data.extend_from_slice(&discriminator);
     data.push(0u8); // memo: Option<String> = None
 
-    use solana_instruction::AccountMeta;
     solana_instruction::Instruction {
         program_id: SQUADS_PROGRAM_ID,
         accounts: vec![
@@ -513,6 +520,63 @@ pub fn write_buffer(
     Ok(Address::from(bytes))
 }
 
+/// Transfer buffer authority to a new address (the vault PDA) so Squads
+/// can execute the upgrade.
+fn set_buffer_authority(
+    buffer: &Address,
+    new_authority: &Address,
+    keypair_path: &Path,
+    rpc_url: &str,
+) -> Result<(), crate::error::CliError> {
+    let output = Command::new("solana")
+        .args([
+            "program",
+            "set-buffer-authority",
+            &bs58::encode(buffer).into_string(),
+            "--new-buffer-authority",
+            &bs58::encode(new_authority).into_string(),
+            "--keypair",
+            keypair_path.to_str().unwrap_or_default(),
+            "--url",
+            rpc_url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run solana program set-buffer-authority: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("set-buffer-authority failed: {stderr}").into());
+    }
+
+    Ok(())
+}
+
+/// Read a program ID (public key) from a Solana keypair file.
+/// Public key is bytes 32..64 of the 64-byte keypair.
+pub fn read_program_id_from_keypair(path: &Path) -> Result<Address, crate::error::CliError> {
+    if !path.exists() {
+        return Err(anyhow::anyhow!(
+            "program keypair not found: {}",
+            path.display()
+        )
+        .into());
+    }
+    let contents = fs::read_to_string(path)?;
+    let bytes: Vec<u8> = serde_json::from_str(&contents).map_err(anyhow::Error::from)?;
+    if bytes.len() != 64 {
+        return Err(anyhow::anyhow!(
+            "program keypair must contain exactly 64 bytes, got {}",
+            bytes.len()
+        )
+        .into());
+    }
+    Ok(Address::from(
+        <[u8; 32]>::try_from(&bytes[32..64]).unwrap(),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Top-level orchestrator
 // ---------------------------------------------------------------------------
@@ -543,7 +607,14 @@ pub fn propose_upgrade(
         bs58::encode(buffer).into_string()
     );
 
-    // 2. Read multisig state to get next transaction index
+    // 2. Transfer buffer authority to the vault so Squads can use it
+    let (vault, _) = vault_pda(multisig, vault_index);
+    let sp = style::spinner("Transferring buffer authority to vault...");
+    set_buffer_authority(&buffer, &vault, keypair_path, rpc_url)?;
+    sp.finish_and_clear();
+    println!("  {} Buffer authority transferred to vault", style::dim("✓"));
+
+    // 3. Read multisig state to get next transaction index
     let account_data = get_account_data(rpc_url, multisig)?.ok_or_else(|| {
         anyhow::anyhow!(
             "multisig account not found: {}",
@@ -551,17 +622,18 @@ pub fn propose_upgrade(
         )
     })?;
     let current_index = read_transaction_index(&account_data)?;
-    let next_index = current_index + 1;
+    let next_index = current_index
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("transaction index overflow"))?;
 
-    // 3. Derive PDAs
-    let (vault, _) = vault_pda(multisig, vault_index);
+    // 4. Derive remaining PDAs
     let (transaction, _) = transaction_pda(multisig, next_index);
     let (proposal, _) = proposal_pda(multisig, next_index);
 
-    // 4. Build inner upgrade message
+    // 5. Build inner upgrade message
     let upgrade_msg = build_upgrade_message(&vault, program_id, &buffer, &member);
 
-    // 5. Build Squads instructions
+    // 6. Build Squads instructions
     let ix_create = vault_transaction_create_ix(
         multisig,
         &transaction,
@@ -573,7 +645,7 @@ pub fn propose_upgrade(
     let ix_propose = proposal_create_ix(multisig, &proposal, &member, &member, next_index);
     let ix_approve = proposal_approve_ix(multisig, &member, &proposal);
 
-    // 6. Build, sign, send transaction
+    // 7. Build, sign, send transaction
     let sp = style::spinner("Submitting proposal...");
 
     let blockhash = get_latest_blockhash(rpc_url)?;
@@ -617,9 +689,8 @@ mod tests {
     #[test]
     fn vault_pda_derivation() {
         let multisig = Address::from([1u8; 32]);
-        let (vault, bump) = vault_pda(&multisig, 0);
+        let (vault, _bump) = vault_pda(&multisig, 0);
         assert_ne!(vault, Address::default());
-        assert!(bump <= 255);
     }
 
     #[test]
@@ -681,6 +752,17 @@ mod tests {
             .into_vec()
             .unwrap();
         assert_eq!(SYSVAR_CLOCK_ID.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn tilde_expansion() {
+        let expanded = expand_tilde("~/foo/bar");
+        assert!(!expanded.starts_with('~'), "tilde should be expanded");
+        assert!(expanded.ends_with("/foo/bar"));
+
+        // Non-tilde paths are unchanged
+        assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_tilde("relative/path"), "relative/path");
     }
 
     #[test]
