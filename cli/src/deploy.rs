@@ -12,6 +12,7 @@ pub fn run(
     keypair: Option<PathBuf>,
     url: Option<String>,
     skip_build: bool,
+    multisig: Option<String>,
 ) -> CliResult {
     let config = QuasarConfig::load()?;
     let name = &config.project.name;
@@ -32,6 +33,50 @@ pub fn run(
         eprintln!();
         std::process::exit(1);
     });
+
+    if let Some(multisig_addr) = &multisig {
+        // Parse multisig address
+        let multisig_bytes: [u8; 32] = bs58::decode(multisig_addr)
+            .into_vec()
+            .map_err(|e| anyhow::anyhow!("invalid multisig address: {e}"))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("multisig address must be 32 bytes"))?;
+        let multisig_key = solana_address::Address::from(multisig_bytes);
+
+        // Read program ID from the program keypair (public key = bytes 32..64)
+        let prog_keypair_path = program_keypair.unwrap_or_else(|| {
+            let default = PathBuf::from("target")
+                .join("deploy")
+                .join(format!("{}-keypair.json", name));
+            if !default.exists() {
+                let module = config.module_name();
+                let alt = PathBuf::from("target")
+                    .join("deploy")
+                    .join(format!("{module}-keypair.json"));
+                if alt.exists() {
+                    return alt;
+                }
+            }
+            default
+        });
+        let prog_bytes: Vec<u8> =
+            serde_json::from_str(&std::fs::read_to_string(&prog_keypair_path)?)
+                .map_err(anyhow::Error::from)?;
+        let program_id =
+            solana_address::Address::from(<[u8; 32]>::try_from(&prog_bytes[32..64]).unwrap());
+
+        let payer_path = crate::multisig::solana_keypair_path(keypair.as_deref());
+        let rpc_url = crate::multisig::solana_rpc_url(url.as_deref());
+
+        return crate::multisig::propose_upgrade(
+            &so_path,
+            &program_id,
+            &multisig_key,
+            &payer_path,
+            &rpc_url,
+            0, // vault_index
+        );
+    }
 
     // Find the program keypair
     let keypair_path = program_keypair.unwrap_or_else(|| {

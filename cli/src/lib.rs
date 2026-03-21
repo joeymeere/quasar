@@ -173,6 +173,10 @@ pub struct DeployCommand {
     /// Skip the build step
     #[arg(long, action = ArgAction::SetTrue)]
     pub skip_build: bool,
+
+    /// Propose upgrade through a Squads multisig
+    #[arg(long, value_name = "ADDRESS")]
+    pub multisig: Option<String>,
 }
 
 #[derive(Args, Debug, Default)]
@@ -328,6 +332,7 @@ pub fn run(cli: Cli) -> CliResult {
             cmd.keypair,
             cmd.url,
             cmd.skip_build,
+            cmd.multisig,
         ),
         Command::Clean(cmd) => clean::run(cmd.all),
         Command::Config(cmd) => cfg::run(cmd.action),
@@ -415,7 +420,7 @@ pub fn print_help() {
         "Run the test suite",
     );
     print_cmd(
-        "deploy  [-u url] [-k keypair] [--skip-build]",
+        "deploy  [-u url] [-k keypair] [--multisig addr]",
         "Deploy to a cluster",
     );
     print_cmd("clean   [-a]", "Remove build artifacts");
