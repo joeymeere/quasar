@@ -33,9 +33,59 @@ pub fn run(
     url: Option<String>,
     skip_build: bool,
     multisig: Option<String>,
+    status: bool,
 ) -> CliResult {
     let config = QuasarConfig::load()?;
     let name = &config.project.name;
+
+    if let Some(multisig_addr) = &multisig {
+        let multisig_bytes: [u8; 32] = bs58::decode(multisig_addr)
+            .into_vec()
+            .map_err(|e| anyhow::anyhow!("invalid multisig address: {e}"))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("multisig address must be 32 bytes"))?;
+        let multisig_key = solana_address::Address::from(multisig_bytes);
+
+        let payer_path = crate::multisig::solana_keypair_path(keypair.as_deref());
+        let rpc_url = crate::multisig::solana_rpc_url(url.as_deref());
+
+        if status {
+            return crate::multisig::show_proposal_status(
+                &multisig_key,
+                &payer_path,
+                &rpc_url,
+            );
+        }
+
+        // Build unless skipped
+        if !skip_build {
+            crate::build::run(false, false, None)?;
+        }
+
+        // Find the .so binary
+        let so_path = utils::find_so(&config, false).unwrap_or_else(|| {
+            eprintln!(
+                "\n  {}",
+                style::fail(&format!("no compiled binary found for \"{name}\""))
+            );
+            eprintln!();
+            eprintln!("  Run {} first.", style::bold("quasar build"));
+            eprintln!();
+            std::process::exit(1);
+        });
+
+        let prog_keypair_path = resolve_program_keypair(&config, program_keypair);
+        let program_id = crate::multisig::read_program_id_from_keypair(&prog_keypair_path)?;
+
+        return crate::multisig::propose_upgrade(
+            &so_path,
+            &program_id,
+            &multisig_key,
+            &payer_path,
+            &rpc_url,
+            0, // vault_index
+        );
+    }
 
     // Build unless skipped
     if !skip_build {
@@ -53,30 +103,6 @@ pub fn run(
         eprintln!();
         std::process::exit(1);
     });
-
-    if let Some(multisig_addr) = &multisig {
-        let multisig_bytes: [u8; 32] = bs58::decode(multisig_addr)
-            .into_vec()
-            .map_err(|e| anyhow::anyhow!("invalid multisig address: {e}"))?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("multisig address must be 32 bytes"))?;
-        let multisig_key = solana_address::Address::from(multisig_bytes);
-
-        let prog_keypair_path = resolve_program_keypair(&config, program_keypair);
-        let program_id = crate::multisig::read_program_id_from_keypair(&prog_keypair_path)?;
-
-        let payer_path = crate::multisig::solana_keypair_path(keypair.as_deref());
-        let rpc_url = crate::multisig::solana_rpc_url(url.as_deref());
-
-        return crate::multisig::propose_upgrade(
-            &so_path,
-            &program_id,
-            &multisig_key,
-            &payer_path,
-            &rpc_url,
-            0, // vault_index
-        );
-    }
 
     // Find the program keypair
     let keypair_path = resolve_program_keypair(&config, program_keypair);

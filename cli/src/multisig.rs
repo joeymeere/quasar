@@ -300,6 +300,175 @@ pub fn read_transaction_index(account_data: &[u8]) -> Result<u64, crate::error::
     Ok(u64::from_le_bytes(bytes))
 }
 
+/// A multisig member with their public key and permissions bitmask.
+pub struct MultisigMember {
+    pub key: Address,
+    pub permissions: u8,
+}
+
+impl MultisigMember {
+    /// Whether the member has Vote permission (bit 1).
+    pub fn can_vote(&self) -> bool {
+        self.permissions & 0x02 != 0
+    }
+}
+
+/// Parsed state from a multisig account.
+pub struct MultisigState {
+    pub threshold: u16,
+    pub transaction_index: u64,
+    pub members: Vec<MultisigMember>,
+}
+
+/// Parse a multisig account's threshold, transaction_index, and members.
+pub fn parse_multisig_account(data: &[u8]) -> Result<MultisigState, crate::error::CliError> {
+    // Offsets: 8 disc + 32 create_key + 32 config_authority = 72 -> threshold (u16)
+    //          74 time_lock (u32), 78 transaction_index (u64), 86 stale_tx_index (u64)
+    //          94 rent_collector (33), 127 bump (1), 128 members vec len (u32)
+    if data.len() < 132 {
+        return Err(anyhow::anyhow!(
+            "multisig account data too short ({} bytes)",
+            data.len()
+        )
+        .into());
+    }
+
+    let threshold = u16::from_le_bytes(data[72..74].try_into().unwrap());
+    let transaction_index = u64::from_le_bytes(data[78..86].try_into().unwrap());
+    let num_members = u32::from_le_bytes(data[128..132].try_into().unwrap()) as usize;
+
+    let required_len = 132 + num_members * 33;
+    if data.len() < required_len {
+        return Err(anyhow::anyhow!(
+            "multisig account data too short for {} members ({} < {} bytes)",
+            num_members,
+            data.len(),
+            required_len,
+        )
+        .into());
+    }
+
+    let mut members = Vec::with_capacity(num_members);
+    for i in 0..num_members {
+        let offset = 132 + i * 33;
+        let key = Address::from(<[u8; 32]>::try_from(&data[offset..offset + 32]).unwrap());
+        let permissions = data[offset + 32];
+        members.push(MultisigMember { key, permissions });
+    }
+
+    Ok(MultisigState {
+        threshold,
+        transaction_index,
+        members,
+    })
+}
+
+/// Proposal status variants from the on-chain enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalStatus {
+    Draft,
+    Active,
+    Rejected,
+    Approved,
+    Executing,
+    Executed,
+    Cancelled,
+}
+
+impl ProposalStatus {
+    fn from_discriminant(d: u8) -> Result<Self, crate::error::CliError> {
+        match d {
+            0 => Ok(Self::Draft),
+            1 => Ok(Self::Active),
+            2 => Ok(Self::Rejected),
+            3 => Ok(Self::Approved),
+            4 => Ok(Self::Executing),
+            5 => Ok(Self::Executed),
+            6 => Ok(Self::Cancelled),
+            _ => Err(anyhow::anyhow!("unknown proposal status: {d}").into()),
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Draft => "Draft",
+            Self::Active => "Active",
+            Self::Rejected => "Rejected",
+            Self::Approved => "Approved",
+            Self::Executing => "Executing",
+            Self::Executed => "Executed",
+            Self::Cancelled => "Cancelled",
+        }
+    }
+}
+
+/// Parsed state from a proposal account.
+pub struct ProposalState {
+    pub transaction_index: u64,
+    pub status: ProposalStatus,
+    pub approved: Vec<Address>,
+}
+
+/// Parse a proposal account's status and approval list.
+pub fn parse_proposal_account(data: &[u8]) -> Result<ProposalState, crate::error::CliError> {
+    // 8 disc + 32 multisig + 8 tx_index = 48 -> status (1 byte variant)
+    if data.len() < 62 {
+        return Err(anyhow::anyhow!(
+            "proposal account data too short ({} bytes)",
+            data.len()
+        )
+        .into());
+    }
+
+    let transaction_index = u64::from_le_bytes(data[40..48].try_into().unwrap());
+    let status = ProposalStatus::from_discriminant(data[48])?;
+
+    // Status payload: all variants except Executing (4) have an i64 timestamp (8 bytes)
+    let status_size = if status == ProposalStatus::Executing {
+        1
+    } else {
+        9
+    };
+    let bump_offset = 48 + status_size;
+    let approved_len_offset = bump_offset + 1; // skip bump byte
+
+    if data.len() < approved_len_offset + 4 {
+        return Err(anyhow::anyhow!("proposal data too short for approved vec").into());
+    }
+
+    let num_approved =
+        u32::from_le_bytes(data[approved_len_offset..approved_len_offset + 4].try_into().unwrap())
+            as usize;
+    let approved_start = approved_len_offset + 4;
+    let required = approved_start + num_approved * 32;
+    if data.len() < required {
+        return Err(anyhow::anyhow!("proposal data too short for {} approvals", num_approved).into());
+    }
+
+    let mut approved = Vec::with_capacity(num_approved);
+    for i in 0..num_approved {
+        let offset = approved_start + i * 32;
+        approved.push(Address::from(
+            <[u8; 32]>::try_from(&data[offset..offset + 32]).unwrap(),
+        ));
+    }
+
+    Ok(ProposalState {
+        transaction_index,
+        status,
+        approved,
+    })
+}
+
+/// Format an address as "1234...5678".
+fn short_address(addr: &Address) -> String {
+    let s = bs58::encode(addr).into_string();
+    if s.len() <= 8 {
+        return s;
+    }
+    format!("{}...{}", &s[..4], &s[s.len() - 4..])
+}
+
 // ---------------------------------------------------------------------------
 // Instruction building
 // ---------------------------------------------------------------------------
@@ -682,6 +851,293 @@ pub fn propose_upgrade(
     Ok(())
 }
 
+/// Show the approval status of the latest multisig proposal.
+///
+/// Displays each member's vote status with colored indicators, and prompts
+/// the user to execute if the threshold has been reached.
+pub fn show_proposal_status(
+    multisig: &Address,
+    keypair_path: &Path,
+    rpc_url: &str,
+) -> crate::error::CliResult {
+    // 1. Fetch and parse the multisig account
+    let sp = style::spinner("Fetching multisig state...");
+    let ms_data = get_account_data(rpc_url, multisig)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "multisig account not found: {}",
+            bs58::encode(multisig).into_string()
+        )
+    })?;
+    let ms = parse_multisig_account(&ms_data)?;
+    sp.finish_and_clear();
+
+    if ms.transaction_index == 0 {
+        println!("\n  {} No proposals found for this multisig.\n", style::dim("·"));
+        return Ok(());
+    }
+
+    // 2. Fetch the latest proposal
+    let (proposal_addr, _) = proposal_pda(multisig, ms.transaction_index);
+    let sp = style::spinner("Fetching proposal...");
+    let prop_data = get_account_data(rpc_url, &proposal_addr)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "proposal account not found for tx #{}",
+            ms.transaction_index
+        )
+    })?;
+    let proposal = parse_proposal_account(&prop_data)?;
+    sp.finish_and_clear();
+
+    // 3. Display header
+    let multisig_short = short_address(multisig);
+    println!();
+    println!(
+        "  {} Multisig {} — Transaction #{}",
+        style::bold("▸"),
+        style::color(45, &multisig_short),
+        style::bold(&ms.transaction_index.to_string()),
+    );
+    println!(
+        "  {} Proposal status: {}",
+        style::dim("│"),
+        match proposal.status {
+            ProposalStatus::Active => style::color(220, proposal.status.label()),
+            ProposalStatus::Approved => style::color(83, proposal.status.label()),
+            ProposalStatus::Executed => style::color(83, proposal.status.label()),
+            ProposalStatus::Rejected => style::color(196, proposal.status.label()),
+            ProposalStatus::Cancelled => style::color(196, proposal.status.label()),
+            _ => style::dim(proposal.status.label()),
+        },
+    );
+    println!("  {}", style::dim("│"));
+
+    // 4. Show each voting member's status
+    let voters: Vec<&MultisigMember> = ms.members.iter().filter(|m| m.can_vote()).collect();
+    let approved_count = proposal.approved.len();
+
+    for member in &voters {
+        let addr = short_address(&member.key);
+        let voted = proposal.approved.contains(&member.key);
+        if voted {
+            // Green checkmark
+            println!(
+                "  {}  {} {}",
+                style::dim("│"),
+                style::color(83, "✔"),
+                style::color(83, &addr),
+            );
+        } else {
+            // Dim pending dot
+            println!(
+                "  {}  {} {}",
+                style::dim("│"),
+                style::dim("·"),
+                style::dim(&addr),
+            );
+        }
+    }
+
+    println!("  {}", style::dim("│"));
+
+    // 5. Show threshold status
+    let threshold = ms.threshold as usize;
+    let remaining = threshold.saturating_sub(approved_count);
+
+    if approved_count >= threshold {
+        println!(
+            "  {} Status: {}/{} signed — {}",
+            style::dim("╰"),
+            style::color(83, &approved_count.to_string()),
+            threshold,
+            style::color(83, "ready to execute"),
+        );
+        println!();
+
+        // Prompt user to execute
+        print!(
+            "  {} Execute this transaction? [y/N] ",
+            style::color(45, "?"),
+        );
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).ok();
+        let input = input.trim().to_lowercase();
+
+        if input == "y" || input == "yes" {
+            execute_approved_proposal(
+                multisig,
+                &ms,
+                &proposal,
+                keypair_path,
+                rpc_url,
+            )?;
+        } else {
+            println!();
+        }
+    } else {
+        println!(
+            "  {} Status: {}/{} signed — awaiting {} {}",
+            style::dim("╰"),
+            style::color(220, &approved_count.to_string()),
+            threshold,
+            style::bold(&remaining.to_string()),
+            if remaining == 1 { "signature" } else { "signatures" },
+        );
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Execute an approved proposal by calling VaultTransactionExecute.
+fn execute_approved_proposal(
+    multisig: &Address,
+    ms: &MultisigState,
+    proposal: &ProposalState,
+    keypair_path: &Path,
+    rpc_url: &str,
+) -> crate::error::CliResult {
+    let keypair = Keypair::read_from_file(keypair_path)?;
+    let member = keypair.address();
+
+    let tx_index = proposal.transaction_index;
+    let (transaction_pda, _) = transaction_pda(multisig, tx_index);
+    let (proposal_pda, _) = proposal_pda(multisig, tx_index);
+
+    // Fetch the VaultTransaction to get inner accounts for execute
+    let tx_data = get_account_data(rpc_url, &transaction_pda)?.ok_or_else(|| {
+        anyhow::anyhow!("vault transaction account not found for tx #{tx_index}")
+    })?;
+
+    let sp = style::spinner("Executing transaction...");
+
+    // Build VaultTransactionExecute instruction
+    let ix = vault_transaction_execute_ix(
+        multisig,
+        &transaction_pda,
+        &proposal_pda,
+        &member,
+        &tx_data,
+        ms,
+    )?;
+
+    let blockhash = get_latest_blockhash(rpc_url)?;
+    let tx = solana_transaction::Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&member),
+        &[&keypair],
+        blockhash,
+    );
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
+
+    let sig = send_transaction(rpc_url, &tx_bytes)?;
+    sp.finish_and_clear();
+
+    println!(
+        "\n  {}",
+        style::success(&format!(
+            "Transaction #{} executed",
+            style::bold(&tx_index.to_string())
+        ))
+    );
+    println!("  {} {sig}", style::dim("Signature:"));
+    println!();
+
+    Ok(())
+}
+
+/// Build the VaultTransactionExecute instruction.
+///
+/// Parses the VaultTransaction account data to extract inner account keys
+/// needed for the execute instruction's remaining accounts.
+fn vault_transaction_execute_ix(
+    multisig: &Address,
+    transaction: &Address,
+    proposal: &Address,
+    member: &Address,
+    vault_tx_data: &[u8],
+    ms: &MultisigState,
+) -> Result<solana_instruction::Instruction, crate::error::CliError> {
+    let discriminator = anchor_discriminator("vault_transaction_execute");
+
+    // VaultTransaction layout:
+    // 8 disc + 32 multisig + 8 creator + 8 tx_index + 1 bump + 1 vault_index
+    // + 1 ephemeral_signers + 4 message_len + message_bytes
+    // We need the vault_index to derive vault PDA, and the message's account_keys
+    // to pass as remaining accounts.
+    if vault_tx_data.len() < 59 {
+        return Err(anyhow::anyhow!("vault transaction data too short").into());
+    }
+
+    let vault_index = vault_tx_data[49];
+    let (vault, _) = vault_pda(multisig, vault_index);
+
+    // Parse inner message account keys
+    // Offset 50: ephemeral_signers (u8), 51: message (Borsh Vec<u8>: u32 len + bytes)
+    let _ephemeral_signers = vault_tx_data[50];
+    if vault_tx_data.len() < 55 {
+        return Err(anyhow::anyhow!("vault transaction data too short for message").into());
+    }
+    let msg_len =
+        u32::from_le_bytes(vault_tx_data[51..55].try_into().unwrap()) as usize;
+    if vault_tx_data.len() < 55 + msg_len {
+        return Err(anyhow::anyhow!("vault transaction data too short for message bytes").into());
+    }
+    let msg = &vault_tx_data[55..55 + msg_len];
+
+    // TransactionMessage layout (SmallVec):
+    // 3 header bytes, then u8 num_keys, then num_keys * 32 bytes of account keys
+    if msg.len() < 4 {
+        return Err(anyhow::anyhow!("inner message too short").into());
+    }
+    let num_keys = msg[3] as usize;
+    if msg.len() < 4 + num_keys * 32 {
+        return Err(anyhow::anyhow!("inner message too short for account keys").into());
+    }
+
+    // Collect the inner account keys (skip index 0 which is the vault/signer)
+    let mut remaining_accounts = Vec::new();
+    for i in 1..num_keys {
+        let offset = 4 + i * 32;
+        let key = Address::from(<[u8; 32]>::try_from(&msg[offset..offset + 32]).unwrap());
+        // All non-vault accounts are passed as writable non-signers
+        remaining_accounts.push(AccountMeta::new(key, false));
+    }
+
+    // Also add program IDs from the inner instructions
+    // The compiled instructions reference program_id_index into the account_keys array,
+    // so those are already covered above.
+
+    // Build the main accounts
+    let mut accounts = vec![
+        AccountMeta::new(*multisig, false),
+        AccountMeta::new_readonly(*transaction, false),
+        AccountMeta::new(*proposal, false),
+        AccountMeta::new_readonly(*member, true),
+    ];
+
+    // Add all multisig members as non-signer readonly (required by Squads)
+    for m in &ms.members {
+        accounts.push(AccountMeta::new_readonly(m.key, false));
+    }
+
+    // Vault (ephemeral signer)
+    accounts.push(AccountMeta::new(vault, false));
+
+    // Remaining accounts from the inner transaction
+    accounts.extend(remaining_accounts);
+
+    Ok(solana_instruction::Instruction {
+        program_id: SQUADS_PROGRAM_ID,
+        accounts,
+        data: discriminator.to_vec(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,6 +1219,86 @@ mod tests {
         // Non-tilde paths are unchanged
         assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
         assert_eq!(expand_tilde("relative/path"), "relative/path");
+    }
+
+    #[test]
+    fn short_address_formatting() {
+        // Use a known address
+        let addr = Address::from([
+            0x06, 0x81, 0xc4, 0xce, 0x47, 0xe2, 0x23, 0x68, 0xb8, 0xb1, 0x55, 0x5e, 0xc8, 0x87,
+            0xaf, 0x09, 0x2e, 0xfc, 0x7e, 0xfb, 0xb6, 0x6c, 0xa3, 0xf5, 0x2f, 0xbf, 0x68, 0xd4,
+            0xac, 0x9c, 0xb7, 0xa8,
+        ]);
+        let short = short_address(&addr);
+        assert!(short.contains("..."), "should contain ellipsis");
+        assert_eq!(&short[..4], &bs58::encode(addr).into_string()[..4]);
+    }
+
+    #[test]
+    fn parse_multisig_account_roundtrip() {
+        // Build a fake multisig account with 2 members
+        let mut data = vec![0u8; 132 + 2 * 33];
+        // threshold at offset 72
+        data[72..74].copy_from_slice(&3u16.to_le_bytes());
+        // transaction_index at offset 78
+        data[78..86].copy_from_slice(&5u64.to_le_bytes());
+        // num_members at offset 128
+        data[128..132].copy_from_slice(&2u32.to_le_bytes());
+        // member 0: all 1s, permissions = 7 (all)
+        data[132..164].copy_from_slice(&[1u8; 32]);
+        data[164] = 0x07;
+        // member 1: all 2s, permissions = 4 (execute only)
+        data[165..197].copy_from_slice(&[2u8; 32]);
+        data[197] = 0x04;
+
+        let ms = parse_multisig_account(&data).unwrap();
+        assert_eq!(ms.threshold, 3);
+        assert_eq!(ms.transaction_index, 5);
+        assert_eq!(ms.members.len(), 2);
+        assert!(ms.members[0].can_vote());
+        assert!(!ms.members[1].can_vote()); // execute-only can't vote
+    }
+
+    #[test]
+    fn parse_proposal_account_active() {
+        // Build a fake proposal with 1 approval
+        let mut data = vec![0u8; 62 + 32]; // enough for 1 approval
+        // transaction_index at offset 40
+        data[40..48].copy_from_slice(&7u64.to_le_bytes());
+        // status = Active (1) at offset 48
+        data[48] = 1;
+        // timestamp at 49..57 (don't care about value)
+        // bump at 57
+        // approved vec len at 58
+        data[58..62].copy_from_slice(&1u32.to_le_bytes());
+        // approved[0] = [3u8; 32]
+        data[62..94].copy_from_slice(&[3u8; 32]);
+
+        let prop = parse_proposal_account(&data).unwrap();
+        assert_eq!(prop.transaction_index, 7);
+        assert_eq!(prop.status, ProposalStatus::Active);
+        assert_eq!(prop.approved.len(), 1);
+        assert_eq!(prop.approved[0], Address::from([3u8; 32]));
+    }
+
+    #[test]
+    fn parse_proposal_account_no_approvals() {
+        let mut data = vec![0u8; 62];
+        data[40..48].copy_from_slice(&1u64.to_le_bytes());
+        data[48] = 0; // Draft
+        // approved vec len = 0
+        data[58..62].copy_from_slice(&0u32.to_le_bytes());
+
+        let prop = parse_proposal_account(&data).unwrap();
+        assert_eq!(prop.status, ProposalStatus::Draft);
+        assert!(prop.approved.is_empty());
+    }
+
+    #[test]
+    fn proposal_status_labels() {
+        assert_eq!(ProposalStatus::Active.label(), "Active");
+        assert_eq!(ProposalStatus::Approved.label(), "Approved");
+        assert_eq!(ProposalStatus::Executed.label(), "Executed");
     }
 
     #[test]

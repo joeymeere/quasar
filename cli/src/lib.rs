@@ -177,6 +177,10 @@ pub struct DeployCommand {
     /// Propose upgrade through a Squads multisig
     #[arg(long, value_name = "ADDRESS")]
     pub multisig: Option<String>,
+
+    /// Show approval status of the latest multisig proposal
+    #[arg(long, action = ArgAction::SetTrue, requires = "multisig")]
+    pub status: bool,
 }
 
 #[derive(Args, Debug, Default)]
@@ -333,6 +337,7 @@ pub fn run(cli: Cli) -> CliResult {
             cmd.url,
             cmd.skip_build,
             cmd.multisig,
+            cmd.status,
         ),
         Command::Clean(cmd) => clean::run(cmd.all),
         Command::Config(cmd) => cfg::run(cmd.action),
@@ -420,7 +425,7 @@ pub fn print_help() {
         "Run the test suite",
     );
     print_cmd(
-        "deploy  [-u url] [-k keypair] [--multisig addr]",
+        "deploy  [-u url] [-k keypair] [--multisig addr] [--status]",
         "Deploy to a cluster",
     );
     print_cmd("clean   [-a]", "Remove build artifacts");
