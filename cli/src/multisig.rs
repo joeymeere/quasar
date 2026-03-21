@@ -1,4 +1,5 @@
 use {
+    crate::style,
     ed25519_dalek::SigningKey,
     sha2::{Sha256, Digest},
     solana_address::Address,
@@ -471,6 +472,90 @@ pub fn write_buffer(
         .map_err(|_| anyhow::anyhow!("buffer address wrong length"))?;
 
     Ok(Address::from(bytes))
+}
+
+// ---------------------------------------------------------------------------
+// Top-level orchestrator
+// ---------------------------------------------------------------------------
+
+/// Propose a program upgrade through a Squads multisig.
+///
+/// 1. Uploads the .so as a buffer
+/// 2. Builds the Squads vault transaction + proposal + approve
+/// 3. Signs and sends the transaction
+pub fn propose_upgrade(
+    so_path: &Path,
+    program_id: &Address,
+    multisig: &Address,
+    keypair_path: &Path,
+    rpc_url: &str,
+    vault_index: u8,
+) -> crate::error::CliResult {
+    let keypair = Keypair::read_from_file(keypair_path)?;
+    let member = keypair.address();
+
+    // 1. Upload buffer
+    let sp = style::spinner("Uploading program buffer...");
+    let buffer = write_buffer(so_path, keypair_path, rpc_url)?;
+    sp.finish_and_clear();
+    println!("  {} Buffer: {}", style::dim("✓"), bs58::encode(buffer).into_string());
+
+    // 2. Read multisig state to get next transaction index
+    let account_data = get_account_data(rpc_url, multisig)?
+        .ok_or_else(|| anyhow::anyhow!("multisig account not found: {}", bs58::encode(multisig).into_string()))?;
+    let current_index = read_transaction_index(&account_data)?;
+    let next_index = current_index + 1;
+
+    // 3. Derive PDAs
+    let (vault, _) = vault_pda(multisig, vault_index);
+    let (transaction, _) = transaction_pda(multisig, next_index);
+    let (proposal, _) = proposal_pda(multisig, next_index);
+
+    // 4. Build inner upgrade message
+    let upgrade_msg = build_upgrade_message(&vault, program_id, &buffer, &member);
+
+    // 5. Build Squads instructions
+    let ix_create = vault_transaction_create_ix(
+        multisig, &transaction, &member, &member, vault_index, upgrade_msg,
+    );
+    let ix_propose = proposal_create_ix(multisig, &proposal, &member, &member, next_index);
+    let ix_approve = proposal_approve_ix(multisig, &member, &proposal);
+
+    // 6. Build, sign, send transaction
+    let sp = style::spinner("Submitting proposal...");
+
+    let blockhash = get_latest_blockhash(rpc_url)?;
+    let tx = solana_transaction::Transaction::new_signed_with_payer(
+        &[ix_create, ix_propose, ix_approve],
+        Some(&member),
+        &[&keypair],
+        blockhash,
+    );
+
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
+
+    let sig = send_transaction(rpc_url, &tx_bytes)?;
+
+    sp.finish_and_clear();
+
+    println!(
+        "\n  {}",
+        style::success(&format!(
+            "Upgrade proposed (tx #{})",
+            style::bold(&next_index.to_string())
+        ))
+    );
+    println!("  {} {sig}", style::dim("Signature:"));
+    println!(
+        "  {} https://v4.squads.so/transactions/{}/tx/{}",
+        style::dim("Squads:"),
+        bs58::encode(multisig).into_string(),
+        next_index
+    );
+    println!();
+
+    Ok(())
 }
 
 #[cfg(test)]

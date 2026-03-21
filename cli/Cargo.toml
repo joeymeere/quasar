@@ -39,6 +39,7 @@ solana-address = { version = "2", features = ["curve25519"] }
 sha2 = "0.10"
 base64 = "0.22"
 ureq = { version = "3", features = ["json"] }
+bincode = "1"
 
 [dev-dependencies]
 tempfile = "3"
