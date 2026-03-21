@@ -13,6 +13,7 @@ pub mod error;
 pub mod idl;
 pub mod init;
 pub mod keys;
+pub mod multisig;
 pub mod new;
 pub mod style;
 pub mod sync;
