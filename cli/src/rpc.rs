@@ -258,6 +258,126 @@ pub fn program_exists_on_chain(
     Ok(owner == "BPFLoaderUpgradeab1e11111111111111111111111")
 }
 
+/// Query recent prioritization fees and return the median in micro-lamports.
+/// Returns 0 if no recent fees are available.
+pub fn get_recent_prioritization_fees(rpc_url: &str) -> Result<u64, crate::error::CliError> {
+    let resp: serde_json::Value = ureq::post(rpc_url)
+        .send_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getRecentPrioritizationFees",
+            "params": []
+        }))
+        .map_err(anyhow::Error::from)?
+        .body_mut()
+        .read_json()
+        .map_err(anyhow::Error::from)?;
+
+    if let Some(err) = resp.get("error") {
+        return Err(anyhow::anyhow!("RPC error: {}", err).into());
+    }
+
+    let entries = resp["result"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut fees: Vec<u64> = entries
+        .iter()
+        .filter_map(|e| e["prioritizationFee"].as_u64())
+        .filter(|&f| f > 0)
+        .collect();
+
+    Ok(median_fee(&mut fees))
+}
+
+/// Poll `getSignatureStatuses` until the transaction reaches `confirmed`
+/// commitment or the timeout expires. Returns true if confirmed.
+pub fn confirm_transaction(
+    rpc_url: &str,
+    signature: &str,
+    timeout_secs: u64,
+) -> Result<bool, crate::error::CliError> {
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        if start.elapsed() >= timeout {
+            return Ok(false);
+        }
+
+        let resp: serde_json::Value = ureq::post(rpc_url)
+            .send_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignatureStatuses",
+                "params": [[signature]]
+            }))
+            .map_err(anyhow::Error::from)?
+            .body_mut()
+            .read_json()
+            .map_err(anyhow::Error::from)?;
+
+        if let Some(status) = resp["result"]["value"][0].as_object() {
+            if status.get("err").is_some() && !status["err"].is_null() {
+                return Err(anyhow::anyhow!(
+                    "transaction failed: {}",
+                    status["err"]
+                )
+                .into());
+            }
+            let confirmation = status
+                .get("confirmationStatus")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if confirmation == "confirmed" || confirmation == "finalized" {
+                return Ok(true);
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// Query the minimum balance for rent exemption for a given data length.
+pub fn get_minimum_balance_for_rent_exemption(
+    rpc_url: &str,
+    data_len: usize,
+) -> Result<u64, crate::error::CliError> {
+    let resp: serde_json::Value = ureq::post(rpc_url)
+        .send_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getMinimumBalanceForRentExemption",
+            "params": [data_len]
+        }))
+        .map_err(anyhow::Error::from)?
+        .body_mut()
+        .read_json()
+        .map_err(anyhow::Error::from)?;
+
+    if let Some(err) = resp.get("error") {
+        return Err(anyhow::anyhow!("RPC error: {}", err).into());
+    }
+
+    resp["result"]
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("missing rent exemption in RPC response").into())
+}
+
+fn median_fee(fees: &mut [u64]) -> u64 {
+    if fees.is_empty() {
+        return 0;
+    }
+    fees.sort_unstable();
+    let mid = fees.len() / 2;
+    if fees.len().is_multiple_of(2) {
+        (fees[mid - 1] + fees[mid]) / 2
+    } else {
+        fees[mid]
+    }
+}
+
 /// Read a program ID (public key) from a Solana keypair file.
 /// Public key is bytes 32..64 of the 64-byte keypair.
 pub fn read_program_id_from_keypair(path: &Path) -> Result<Address, crate::error::CliError> {
@@ -316,5 +436,25 @@ mod tests {
             resolve_cluster("https://my-rpc.example.com"),
             "https://my-rpc.example.com"
         );
+    }
+
+    #[test]
+    fn priority_fee_median_odd() {
+        assert_eq!(median_fee(&mut vec![100, 300, 200]), 200);
+    }
+
+    #[test]
+    fn priority_fee_median_even() {
+        assert_eq!(median_fee(&mut vec![100, 200, 300, 400]), 250);
+    }
+
+    #[test]
+    fn priority_fee_median_empty() {
+        assert_eq!(median_fee(&mut vec![]), 0);
+    }
+
+    #[test]
+    fn priority_fee_median_single() {
+        assert_eq!(median_fee(&mut vec![500]), 500);
     }
 }
