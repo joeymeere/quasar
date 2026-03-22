@@ -18,14 +18,26 @@ use {
 // Solana CLI config
 // ---------------------------------------------------------------------------
 
-/// Read the Solana CLI config to get RPC URL and keypair path.
-/// Falls back to defaults if config is missing.
+/// Resolve a cluster name or URL to a full RPC endpoint.
+///
+/// Accepts `mainnet-beta`, `devnet`, `testnet`, `localnet`, or a full URL.
+/// Falls back to the Solana CLI config if no override is provided.
 pub fn solana_rpc_url(url_override: Option<&str>) -> String {
     if let Some(url) = url_override {
-        return url.to_string();
+        return resolve_cluster(url);
     }
     read_config_field("json_rpc_url")
         .unwrap_or_else(|| "https://api.mainnet-beta.solana.com".to_string())
+}
+
+fn resolve_cluster(input: &str) -> String {
+    match input {
+        "mainnet-beta" => "https://api.mainnet-beta.solana.com".to_string(),
+        "devnet" => "https://api.devnet.solana.com".to_string(),
+        "testnet" => "https://api.testnet.solana.com".to_string(),
+        "localnet" => "http://localhost:8899".to_string(),
+        url => url.to_string(),
+    }
 }
 
 pub fn solana_keypair_path(keypair_override: Option<&Path>) -> std::path::PathBuf {
@@ -1289,6 +1301,27 @@ mod tests {
         // Non-tilde paths are unchanged
         assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
         assert_eq!(expand_tilde("relative/path"), "relative/path");
+    }
+
+    #[test]
+    fn cluster_name_resolution() {
+        assert_eq!(
+            resolve_cluster("mainnet-beta"),
+            "https://api.mainnet-beta.solana.com"
+        );
+        assert_eq!(
+            resolve_cluster("devnet"),
+            "https://api.devnet.solana.com"
+        );
+        assert_eq!(
+            resolve_cluster("testnet"),
+            "https://api.testnet.solana.com"
+        );
+        assert_eq!(resolve_cluster("localnet"), "http://localhost:8899");
+        assert_eq!(
+            resolve_cluster("https://my-rpc.example.com"),
+            "https://my-rpc.example.com"
+        );
     }
 
     #[test]
