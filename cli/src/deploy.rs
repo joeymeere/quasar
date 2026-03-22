@@ -1,9 +1,6 @@
 use {
     crate::{config::QuasarConfig, error::CliResult, style, utils},
-    std::{
-        path::PathBuf,
-        process::{Command, Stdio},
-    },
+    std::path::PathBuf,
 };
 
 /// Resolve the program keypair path, falling back to target/deploy/<name>-keypair.json.
@@ -57,95 +54,6 @@ fn build_and_find_so(
     })
 }
 
-/// Run `solana program deploy`.
-fn solana_deploy(
-    so_path: &std::path::Path,
-    program_keypair: &std::path::Path,
-    upgrade_authority: Option<&std::path::Path>,
-    payer_keypair: Option<&std::path::Path>,
-    url: Option<&str>,
-) -> CliResult {
-    let sp = style::spinner("Deploying...");
-
-    let mut cmd = Command::new("solana");
-    cmd.args([
-        "program",
-        "deploy",
-        so_path.to_str().unwrap_or_default(),
-        "--program-id",
-        program_keypair.to_str().unwrap_or_default(),
-    ]);
-
-    if let Some(authority) = upgrade_authority {
-        cmd.args([
-            "--upgrade-authority",
-            authority.to_str().unwrap_or_default(),
-        ]);
-    }
-
-    if let Some(payer) = payer_keypair {
-        cmd.args(["--keypair", payer.to_str().unwrap_or_default()]);
-    }
-
-    if let Some(cluster) = url {
-        cmd.args(["--url", cluster]);
-    }
-
-    let output = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output();
-
-    sp.finish_and_clear();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            let program_id = stdout
-                .lines()
-                .find(|l| l.contains("Program Id:"))
-                .and_then(|l| l.split(':').nth(1))
-                .map(|s| s.trim())
-                .unwrap_or("(unknown)");
-
-            println!(
-                "\n  {}",
-                style::success(&format!("Deployed to {}", style::bold(program_id)))
-            );
-
-            Ok(())
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            if !stderr.is_empty() {
-                eprintln!();
-                for line in stderr.lines() {
-                    eprintln!("  {line}");
-                }
-            }
-            if !stdout.is_empty() {
-                for line in stdout.lines() {
-                    eprintln!("  {line}");
-                }
-            }
-            eprintln!();
-            eprintln!("  {}", style::fail("deploy failed"));
-            std::process::exit(o.status.code().unwrap_or(1));
-        }
-        Err(e) => {
-            eprintln!(
-                "\n  {}",
-                style::fail(&format!("failed to run solana program deploy: {e}"))
-            );
-            eprintln!();
-            eprintln!(
-                "  Make sure the {} CLI is installed and configured.",
-                style::bold("solana")
-            );
-            eprintln!();
-            std::process::exit(1);
-        }
-    }
-}
-
 pub struct DeployOpts {
     pub program_keypair: Option<PathBuf>,
     pub upgrade_authority: Option<PathBuf>,
@@ -155,6 +63,7 @@ pub struct DeployOpts {
     pub multisig: Option<String>,
     pub status: bool,
     pub upgrade: bool,
+    pub priority_fee: Option<u64>,
 }
 
 pub fn run(opts: DeployOpts) -> CliResult {
@@ -167,23 +76,42 @@ pub fn run(opts: DeployOpts) -> CliResult {
         multisig,
         status,
         upgrade,
+        priority_fee,
     } = opts;
     let config = QuasarConfig::load()?;
     let name = &config.project.name;
+
+    // Resolve cluster URL once
+    let rpc_url = crate::rpc::solana_rpc_url(url.as_deref());
+
+    // Resolve priority fee: use override or auto-calculate
+    let fee = match priority_fee {
+        Some(f) => f,
+        None => {
+            let auto = crate::rpc::get_recent_prioritization_fees(&rpc_url).unwrap_or(0);
+            if auto > 0 {
+                println!(
+                    "  {} Auto priority fee: {} micro-lamports",
+                    style::dim("i"),
+                    auto
+                );
+            }
+            auto
+        }
+    };
 
     // --upgrade --multisig: Squads proposal flow
     if upgrade {
         if let Some(multisig_addr) = &multisig {
             let multisig_key = parse_multisig_address(multisig_addr)?;
             let payer_path = crate::rpc::solana_keypair_path(keypair.as_deref());
-            let rpc_url = crate::rpc::solana_rpc_url(url.as_deref());
 
             if status {
                 return crate::multisig::show_proposal_status(
                     &multisig_key,
                     &payer_path,
                     &rpc_url,
-                    0,
+                    fee,
                 );
             }
 
@@ -199,14 +127,10 @@ pub fn run(opts: DeployOpts) -> CliResult {
                 &payer_path,
                 &rpc_url,
                 0,
-                0,
+                fee,
             );
         }
     }
-
-    // Resolve cluster URL once — handles shorthands like "localnet" that
-    // the Solana CLI doesn't understand natively.
-    let rpc_url = crate::rpc::solana_rpc_url(url.as_deref());
 
     // Everything below needs a build and a .so
     let so_path = build_and_find_so(&config, name, skip_build)?;
@@ -232,9 +156,10 @@ pub fn run(opts: DeployOpts) -> CliResult {
 
     // Read program ID from the keypair for on-chain check
     let program_id = crate::rpc::read_program_id_from_keypair(&keypair_path)?;
+    let exists = crate::rpc::program_exists_on_chain(&rpc_url, &program_id)?;
 
-    // If NOT --upgrade, verify the program doesn't already exist on-chain
-    if !upgrade && crate::rpc::program_exists_on_chain(&rpc_url, &program_id)? {
+    // Forward check: deploy on existing program
+    if !upgrade && exists {
         eprintln!(
             "\n  {}",
             style::fail(&format!(
@@ -251,29 +176,103 @@ pub fn run(opts: DeployOpts) -> CliResult {
         std::process::exit(1);
     }
 
-    // Deploy (or upgrade) via solana CLI
-    solana_deploy(
-        &so_path,
-        &keypair_path,
-        upgrade_authority.as_deref(),
-        keypair.as_deref(),
-        Some(&rpc_url),
-    )?;
+    // Reverse check: --upgrade on non-existent program
+    if upgrade && !exists {
+        eprintln!(
+            "\n  {}",
+            style::fail(&format!(
+                "program not found at {}",
+                bs58::encode(program_id).into_string()
+            ))
+        );
+        eprintln!();
+        eprintln!(
+            "  Drop {} for a fresh deploy.",
+            style::bold("--upgrade")
+        );
+        eprintln!();
+        std::process::exit(1);
+    }
+
+    // Load the payer keypair
+    let payer_path = crate::rpc::solana_keypair_path(keypair.as_deref());
+    let payer = crate::rpc::Keypair::read_from_file(&payer_path)?;
+
+    if upgrade {
+        // Authority validation before buffer upload
+        let authority_keypair = if let Some(ref auth_path) = upgrade_authority {
+            crate::rpc::Keypair::read_from_file(auth_path)?
+        } else {
+            crate::rpc::Keypair::read_from_file(&payer_path)?
+        };
+
+        let sp = style::spinner("Verifying upgrade authority...");
+        crate::bpf_loader::verify_upgrade_authority(
+            &rpc_url,
+            &program_id,
+            &authority_keypair.address(),
+        )?;
+        sp.finish_and_clear();
+
+        // Upgrade
+        let sp = style::spinner("Uploading and upgrading...");
+        crate::bpf_loader::upgrade_program(
+            &so_path,
+            &program_id,
+            &authority_keypair,
+            &rpc_url,
+            fee,
+        )?;
+        sp.finish_and_clear();
+
+        println!(
+            "\n  {}",
+            style::success(&format!(
+                "Upgraded {}",
+                style::bold(&bs58::encode(program_id).into_string())
+            ))
+        );
+    } else {
+        // Fresh deploy
+        let program_kp = crate::rpc::Keypair::read_from_file(&keypair_path)?;
+
+        let sp = style::spinner("Deploying...");
+        let addr = crate::bpf_loader::deploy_program(
+            &so_path,
+            &program_kp,
+            &payer,
+            &rpc_url,
+            fee,
+        )?;
+        sp.finish_and_clear();
+
+        println!(
+            "\n  {}",
+            style::success(&format!(
+                "Deployed to {}",
+                style::bold(&bs58::encode(addr).into_string())
+            ))
+        );
+    }
 
     // --multisig without --upgrade: transfer authority to vault after deploy
     if let Some(multisig_addr) = &multisig {
         let multisig_key = parse_multisig_address(multisig_addr)?;
         let (vault, _) = crate::multisig::vault_pda(&multisig_key, 0);
-        let payer_path = crate::rpc::solana_keypair_path(keypair.as_deref());
+
+        let authority_keypair = if let Some(ref auth_path) = upgrade_authority {
+            crate::rpc::Keypair::read_from_file(auth_path)?
+        } else {
+            crate::rpc::Keypair::read_from_file(&payer_path)?
+        };
 
         let sp = style::spinner("Transferring upgrade authority to multisig vault...");
-        let authority_keypair = crate::rpc::Keypair::read_from_file(&payer_path)?;
         crate::bpf_loader::set_authority(
             &crate::bpf_loader::programdata_pda(&program_id).0,
             &authority_keypair,
             Some(&vault),
             &rpc_url,
-            0,
+            fee,
         )?;
         sp.finish_and_clear();
 

@@ -187,6 +187,10 @@ pub struct DeployCommand {
     /// Show approval status of the latest multisig proposal
     #[arg(long, action = ArgAction::SetTrue, requires = "multisig", requires = "upgrade")]
     pub status: bool,
+
+    /// Priority fee in micro-lamports (auto-calculated if omitted)
+    #[arg(long, value_name = "MICRO_LAMPORTS")]
+    pub priority_fee: Option<u64>,
 }
 
 #[derive(Args, Debug, Default)]
@@ -345,6 +349,7 @@ pub fn run(cli: Cli) -> CliResult {
             multisig: cmd.multisig,
             status: cmd.status,
             upgrade: cmd.upgrade,
+            priority_fee: cmd.priority_fee,
         }),
         Command::Clean(cmd) => clean::run(cmd.all),
         Command::Config(cmd) => cfg::run(cmd.action),
@@ -432,7 +437,7 @@ pub fn print_help() {
         "Run the test suite",
     );
     print_cmd(
-        "deploy  [-u url] [-k keypair] [--upgrade] [--multisig addr]",
+        "deploy  [-u url] [-k keypair] [--upgrade] [--multisig addr] [--priority-fee n]",
         "Deploy or upgrade a program",
     );
     print_cmd("clean   [-a]", "Remove build artifacts");
