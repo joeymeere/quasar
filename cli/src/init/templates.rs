@@ -6,13 +6,6 @@ pub(super) const GITIGNORE: &str = "\
 # Build artifacts
 /target
 
-# Lock files
-Cargo.lock
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-bun.lockb
-
 # Dependencies
 node_modules
 
