@@ -722,6 +722,41 @@ fn set_buffer_authority(
     Ok(())
 }
 
+/// Transfer a program's upgrade authority to a new address.
+/// Used after initial deploy to hand authority to the Squads vault PDA.
+pub fn set_upgrade_authority(
+    program_id: &Address,
+    new_authority: &Address,
+    keypair_path: &Path,
+    rpc_url: &str,
+) -> Result<(), crate::error::CliError> {
+    let output = Command::new("solana")
+        .args([
+            "program",
+            "set-upgrade-authority",
+            &bs58::encode(program_id).into_string(),
+            "--new-upgrade-authority",
+            &bs58::encode(new_authority).into_string(),
+            "--keypair",
+            keypair_path.to_str().unwrap_or_default(),
+            "--url",
+            rpc_url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| {
+            anyhow::anyhow!("failed to run solana program set-upgrade-authority: {e}")
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("set-upgrade-authority failed: {stderr}").into());
+    }
+
+    Ok(())
+}
+
 /// Read a program ID (public key) from a Solana keypair file.
 /// Public key is bytes 32..64 of the 64-byte keypair.
 pub fn read_program_id_from_keypair(path: &Path) -> Result<Address, crate::error::CliError> {
