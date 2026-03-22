@@ -4,7 +4,7 @@ use {
             self, BPF_LOADER_UPGRADEABLE_ID, SYSTEM_PROGRAM_ID, SYSVAR_CLOCK_ID, SYSVAR_RENT_ID,
             programdata_pda,
         },
-        rpc::{get_account_data, get_latest_blockhash, send_transaction, Keypair},
+        rpc::{confirm_transaction, get_account_data, get_latest_blockhash, send_transaction, Keypair},
         style,
     },
     sha2::{Digest, Sha256},
@@ -505,8 +505,13 @@ pub fn propose_upgrade(
         .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
 
     let sig = send_transaction(rpc_url, &tx_bytes)?;
+    let confirmed = confirm_transaction(rpc_url, &sig, 30)?;
 
     sp.finish_and_clear();
+
+    if !confirmed {
+        return Err(anyhow::anyhow!("proposal transaction timed out").into());
+    }
 
     println!(
         "\n  {}",
@@ -720,7 +725,12 @@ fn execute_approved_proposal(
         .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
 
     let sig = send_transaction(rpc_url, &tx_bytes)?;
+    let confirmed = confirm_transaction(rpc_url, &sig, 30)?;
     sp.finish_and_clear();
+
+    if !confirmed {
+        return Err(anyhow::anyhow!("execute transaction timed out").into());
+    }
 
     println!(
         "\n  {}",

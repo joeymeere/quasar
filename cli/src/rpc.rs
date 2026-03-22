@@ -129,9 +129,18 @@ impl Signer for Keypair {
 // RPC (raw JSON-RPC via ureq)
 // ---------------------------------------------------------------------------
 
+/// Create a ureq agent with a 30-second global timeout.
+fn rpc_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .new_agent()
+}
+
 /// Fetch the latest blockhash from the RPC.
 pub fn get_latest_blockhash(rpc_url: &str) -> Result<Hash, crate::error::CliError> {
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -165,7 +174,8 @@ pub fn send_transaction(rpc_url: &str, tx_bytes: &[u8]) -> Result<String, crate:
     use base64::{engine::general_purpose::STANDARD, Engine};
     let encoded = STANDARD.encode(tx_bytes);
 
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -192,7 +202,8 @@ pub fn get_account_data(
     rpc_url: &str,
     address: &Address,
 ) -> Result<Option<Vec<u8>>, crate::error::CliError> {
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -229,7 +240,8 @@ pub fn program_exists_on_chain(
     rpc_url: &str,
     program_id: &Address,
 ) -> Result<bool, crate::error::CliError> {
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -261,7 +273,8 @@ pub fn program_exists_on_chain(
 /// Query recent prioritization fees and return the median in micro-lamports.
 /// Returns 0 if no recent fees are available.
 pub fn get_recent_prioritization_fees(rpc_url: &str) -> Result<u64, crate::error::CliError> {
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -306,7 +319,8 @@ pub fn confirm_transaction(
             return Ok(false);
         }
 
-        let resp: serde_json::Value = ureq::post(rpc_url)
+        let resp: serde_json::Value = rpc_agent()
+            .post(rpc_url)
             .send_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -344,7 +358,8 @@ pub fn get_minimum_balance_for_rent_exemption(
     rpc_url: &str,
     data_len: usize,
 ) -> Result<u64, crate::error::CliError> {
-    let resp: serde_json::Value = ureq::post(rpc_url)
+    let resp: serde_json::Value = rpc_agent()
+        .post(rpc_url)
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,

@@ -43,14 +43,10 @@ fn build_and_find_so(
         crate::build::run(false, false, None)?;
     }
     utils::find_so(config, false).ok_or_else(|| {
-        eprintln!(
-            "\n  {}",
-            style::fail(&format!("no compiled binary found for \"{name}\""))
-        );
-        eprintln!();
-        eprintln!("  Run {} first.", style::bold("quasar build"));
-        eprintln!();
-        std::process::exit(1);
+        anyhow::anyhow!(
+            "no compiled binary found for \"{name}\". Run `quasar build` first."
+        )
+        .into()
     })
 }
 
@@ -137,21 +133,11 @@ pub fn run(opts: DeployOpts) -> CliResult {
     let keypair_path = resolve_program_keypair(&config, program_keypair);
 
     if !keypair_path.exists() {
-        eprintln!(
-            "\n  {}",
-            style::fail(&format!(
-                "program keypair not found: {}",
-                keypair_path.display()
-            ))
-        );
-        eprintln!();
-        eprintln!(
-            "  Run {} to generate one, or pass {} explicitly.",
-            style::bold("quasar keys new"),
-            style::bold("--program-keypair")
-        );
-        eprintln!();
-        std::process::exit(1);
+        return Err(anyhow::anyhow!(
+            "program keypair not found: {}. Run `quasar keys new` to generate one, or pass `--program-keypair` explicitly.",
+            keypair_path.display()
+        )
+        .into());
     }
 
     // Read program ID from the keypair for on-chain check
@@ -160,38 +146,20 @@ pub fn run(opts: DeployOpts) -> CliResult {
 
     // Forward check: deploy on existing program
     if !upgrade && exists {
-        eprintln!(
-            "\n  {}",
-            style::fail(&format!(
-                "program already deployed at {}",
-                bs58::encode(program_id).into_string()
-            ))
-        );
-        eprintln!();
-        eprintln!(
-            "  Use {} to upgrade an existing program.",
-            style::bold("quasar deploy --upgrade")
-        );
-        eprintln!();
-        std::process::exit(1);
+        return Err(anyhow::anyhow!(
+            "program already deployed at {}. Use `quasar deploy --upgrade` to upgrade an existing program.",
+            bs58::encode(program_id).into_string()
+        )
+        .into());
     }
 
     // Reverse check: --upgrade on non-existent program
     if upgrade && !exists {
-        eprintln!(
-            "\n  {}",
-            style::fail(&format!(
-                "program not found at {}",
-                bs58::encode(program_id).into_string()
-            ))
-        );
-        eprintln!();
-        eprintln!(
-            "  Drop {} for a fresh deploy.",
-            style::bold("--upgrade")
-        );
-        eprintln!();
-        std::process::exit(1);
+        return Err(anyhow::anyhow!(
+            "program not found at {}. Drop `--upgrade` for a fresh deploy.",
+            bs58::encode(program_id).into_string()
+        )
+        .into());
     }
 
     // Load the payer keypair

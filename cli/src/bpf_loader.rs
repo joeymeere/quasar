@@ -49,6 +49,9 @@ pub const CHUNK_SIZE: usize = 950;
 /// discriminant + 32-byte authority pubkey.
 pub const BUFFER_HEADER_SIZE: usize = 37;
 
+/// Maximum number of retry attempts for buffer chunk writes.
+const WRITE_RETRIES: u32 = 3;
+
 // ---------------------------------------------------------------------------
 // PDA helpers
 // ---------------------------------------------------------------------------
@@ -340,23 +343,45 @@ pub fn write_buffer(
             chunk,
         ));
 
-        let bh = get_latest_blockhash(rpc_url)?;
-        let write_tx = solana_transaction::Transaction::new_signed_with_payer(
-            &write_ixs,
-            Some(&payer.address()),
-            &[payer],
-            bh,
-        );
-        let write_tx_bytes = bincode::serialize(&write_tx)
-            .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
-        let write_sig = send_transaction(rpc_url, &write_tx_bytes)?;
-        let write_confirmed = confirm_transaction(rpc_url, &write_sig, 30)?;
-        if !write_confirmed {
-            return Err(anyhow::anyhow!(
-                "write chunk {i} timed out (buffer: {})",
-                bs58::encode(buffer_addr).into_string()
-            )
-            .into());
+        let mut last_err = None;
+        for attempt in 0..WRITE_RETRIES {
+            let bh = get_latest_blockhash(rpc_url)?;
+            let write_tx = solana_transaction::Transaction::new_signed_with_payer(
+                &write_ixs,
+                Some(&payer.address()),
+                &[payer],
+                bh,
+            );
+            let write_tx_bytes = bincode::serialize(&write_tx)
+                .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
+            match send_transaction(rpc_url, &write_tx_bytes) {
+                Ok(write_sig) => match confirm_transaction(rpc_url, &write_sig, 30) {
+                    Ok(true) => {
+                        last_err = None;
+                        break;
+                    }
+                    Ok(false) => {
+                        last_err = Some(anyhow::anyhow!(
+                            "write chunk {i} timed out (buffer: {}, attempt {}/{})",
+                            bs58::encode(buffer_addr).into_string(),
+                            attempt + 1,
+                            WRITE_RETRIES,
+                        ));
+                    }
+                    Err(e) => {
+                        last_err = Some(anyhow::anyhow!("{e}"));
+                    }
+                },
+                Err(e) => {
+                    last_err = Some(anyhow::anyhow!("{e}"));
+                }
+            }
+            if attempt + 1 < WRITE_RETRIES {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+        if let Some(e) = last_err {
+            return Err(e.into());
         }
         bar.set_position(end as u64);
     }
