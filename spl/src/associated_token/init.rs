@@ -80,6 +80,7 @@ pub trait InitAssociatedToken: AsAccountView + Sized {
                 view,
                 mint.to_account_view().address(),
                 wallet.to_account_view().address(),
+                token_program.address(),
             )
         }
     }

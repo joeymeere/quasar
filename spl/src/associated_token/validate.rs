@@ -21,5 +21,5 @@ pub fn validate_ata(
     if !quasar_lang::keys_eq(view.address(), &expected) {
         return Err(ProgramError::InvalidSeeds);
     }
-    validate_token_account(view, mint, wallet)
+    validate_token_account(view, mint, wallet, token_program)
 }

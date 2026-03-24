@@ -124,6 +124,39 @@ fn extract_account_inner_type(ty: &Type) -> Option<proc_macro2::TokenStream> {
     extract_generic_inner_type(deref_ty, "Account").map(|inner| quote!(#inner))
 }
 
+/// Generate the owner check for init_if_needed validation based on wrapper
+/// type.
+///
+/// - `Account<T>`: uses `CheckOwner` trait (single comparison against a
+///   compile-time constant — the most CU-efficient path).
+/// - `InterfaceAccount<T>`: exact match against `token_program.address()`. This
+///   subsumes the broader "is it SPL Token or Token-2022" check.
+fn gen_owner_check(
+    field_name: &Ident,
+    effective_ty: &Type,
+    tok_program_addr: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let underlying_ty = match effective_ty {
+        Type::Reference(r) => &*r.elem,
+        other => other,
+    };
+    if let Some(inner_ty) = extract_generic_inner_type(underlying_ty, "Account") {
+        let inner_base = strip_generics(inner_ty);
+        quote! {
+            <#inner_base as quasar_lang::traits::CheckOwner>::check_owner(#field_name)?;
+        }
+    } else {
+        // InterfaceAccount — exact token_program match
+        quote! {
+            if quasar_lang::utils::hint::unlikely(
+                !quasar_lang::keys_eq(#field_name.owner(), #tok_program_addr)
+            ) {
+                return Err(ProgramError::IllegalOwner);
+            }
+        }
+    }
+}
+
 /// Check if the inner type T of Account<T> has a lifetime parameter,
 /// indicating a dynamic account type (e.g., Account<Profile<'info>>).
 fn is_dynamic_account_type(ty: &Type) -> bool {
@@ -587,6 +620,18 @@ pub(super) fn process_fields(
 
         // Generate type-specific validation (owner, discriminator, address).
         // Flags are already validated via u32 header in parse_accounts.
+        //
+        // For init/init_if_needed fields with token/mint/ATA attrs, skip
+        // Account<T> and InterfaceAccount<T> checks here — the init block's
+        // inline validation handles everything (owner, data_len,
+        // is_initialized, field-specific). This avoids redundant key
+        // comparisons and saves CUs. For generic Account<T> init_if_needed
+        // (no token/mint attrs), keep mut_checks since the init block has
+        // no validate_existing and these are the only defense.
+        let has_inline_validation = attrs.token_mint.is_some()
+            || attrs.associated_token_mint.is_some()
+            || attrs.mint_decimals.is_some();
+        let skip_mut_checks = (attrs.is_init || attrs.init_if_needed) && has_inline_validation;
         let mut push_check = |check: proc_macro2::TokenStream| {
             if is_optional {
                 mut_checks.push(quote! { if let Some(ref #field_name) = #field_name { #check } });
@@ -596,24 +641,55 @@ pub(super) fn process_fields(
         };
 
         if let Some(inner_ty) = extract_generic_inner_type(underlying_ty, "Account") {
-            let field_name_str = field_name.to_string();
-            push_check(quote! {
-                #[cfg(feature = "debug")]
-                if let Err(e) = <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view()) {
-                    quasar_lang::prelude::log(&::alloc::format!("Owner check failed for account '{}'", #field_name_str));
-                    return Err(e);
-                }
-                #[cfg(not(feature = "debug"))]
-                <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view())?;
+            if !skip_mut_checks {
+                let field_name_str = field_name.to_string();
+                push_check(quote! {
+                    #[cfg(feature = "debug")]
+                    if let Err(e) = <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view()) {
+                        quasar_lang::prelude::log(&::alloc::format!("Owner check failed for account '{}'", #field_name_str));
+                        return Err(e);
+                    }
+                    #[cfg(not(feature = "debug"))]
+                    <#inner_ty as quasar_lang::traits::CheckOwner>::check_owner(#field_name.to_account_view())?;
 
-                #[cfg(feature = "debug")]
-                if let Err(e) = <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) {
-                    quasar_lang::prelude::log(&::alloc::format!("Discriminator check failed for account '{}': data may be uninitialized or corrupted", #field_name_str));
-                    return Err(e);
-                }
-                #[cfg(not(feature = "debug"))]
-                <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
-            });
+                    #[cfg(feature = "debug")]
+                    if let Err(e) = <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) {
+                        quasar_lang::prelude::log(&::alloc::format!("Discriminator check failed for account '{}': data may be uninitialized or corrupted", #field_name_str));
+                        return Err(e);
+                    }
+                    #[cfg(not(feature = "debug"))]
+                    <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
+                });
+            }
+        } else if let Some(inner_ty) = extract_generic_inner_type(underlying_ty, "InterfaceAccount")
+        {
+            if !skip_mut_checks {
+                let field_name_str = field_name.to_string();
+                push_check(quote! {
+                    {
+                        let __owner = #field_name.to_account_view().owner();
+                        if quasar_lang::utils::hint::unlikely(
+                            !quasar_lang::keys_eq(__owner, &quasar_spl::SPL_TOKEN_ID)
+                                && !quasar_lang::keys_eq(__owner, &quasar_spl::TOKEN_2022_ID)
+                        ) {
+                            #[cfg(feature = "debug")]
+                            quasar_lang::prelude::log(&::alloc::format!(
+                                "Owner check failed for interface account '{}': not owned by SPL Token or Token-2022",
+                                #field_name_str
+                            ));
+                            return Err(ProgramError::IllegalOwner);
+                        }
+                    }
+
+                    #[cfg(feature = "debug")]
+                    if let Err(e) = <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view()) {
+                        quasar_lang::prelude::log(&::alloc::format!("Account check failed for interface account '{}': data may be uninitialized or corrupted", #field_name_str));
+                        return Err(e);
+                    }
+                    #[cfg(not(feature = "debug"))]
+                    <#inner_ty as quasar_lang::traits::AccountCheck>::check(#field_name.to_account_view())?;
+                });
+            }
         } else if let Some(inner_ty) = extract_generic_inner_type(underlying_ty, "Sysvar") {
             let field_name_str = field_name.to_string();
             push_check(quote! {
@@ -968,10 +1044,42 @@ pub(super) fn process_fields(
                     }
                 };
 
+                let owner_check = gen_owner_check(field_name, effective_ty, &token_program_addr);
                 let validate = quote! {
-                    quasar_spl::validate_ata(
-                        #field_name, #auth_field.address(), #mint_field.address(), #token_program_addr,
-                    )?;
+                    {
+                        let (__expected_ata, _) = quasar_spl::get_associated_token_address_with_program(
+                            #auth_field.address(),
+                            #mint_field.address(),
+                            #token_program_addr,
+                        );
+                        if quasar_lang::utils::hint::unlikely(
+                            !quasar_lang::keys_eq(#field_name.address(), &__expected_ata)
+                        ) {
+                            return Err(ProgramError::InvalidSeeds);
+                        }
+                    }
+                    #owner_check
+                    if quasar_lang::utils::hint::unlikely(
+                        #field_name.data_len() < quasar_spl::TokenAccountState::LEN
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    let __state = unsafe {
+                        &*(#field_name.data_ptr() as *const quasar_spl::TokenAccountState)
+                    };
+                    if quasar_lang::utils::hint::unlikely(!__state.is_initialized()) {
+                        return Err(ProgramError::UninitializedAccount);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        !quasar_lang::keys_eq(__state.mint(), #mint_field.address())
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        !quasar_lang::keys_eq(__state.owner(), #auth_field.address())
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
                 };
                 // ATA: create_idempotent (1) for init_if_needed, create (0) for init
                 init_blocks.push(wrap_init_block(
@@ -999,10 +1107,31 @@ pub(super) fn process_fields(
                         #tok_field, #field_name, #mint_field, #auth_field.address(),
                     ).invoke()?;
                 };
+                let tok_addr = quote! { #tok_field.address() };
+                let owner_check = gen_owner_check(field_name, effective_ty, &tok_addr);
                 let validate = quote! {
-                    quasar_spl::validate_token_account(
-                        #field_name, #mint_field.address(), #auth_field.address(),
-                    )?;
+                    #owner_check
+                    if quasar_lang::utils::hint::unlikely(
+                        #field_name.data_len() < quasar_spl::TokenAccountState::LEN
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    let __state = unsafe {
+                        &*(#field_name.data_ptr() as *const quasar_spl::TokenAccountState)
+                    };
+                    if quasar_lang::utils::hint::unlikely(!__state.is_initialized()) {
+                        return Err(ProgramError::UninitializedAccount);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        !quasar_lang::keys_eq(__state.mint(), #mint_field.address())
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        !quasar_lang::keys_eq(__state.owner(), #auth_field.address())
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
                 };
                 init_blocks.push(wrap_init_block(
                     field_name,
@@ -1046,8 +1175,55 @@ pub(super) fn process_fields(
                         #freeze_expr,
                     ).invoke()?;
                 };
+                let tok_addr = quote! { #tok_field.address() };
+                let owner_check = gen_owner_check(field_name, effective_ty, &tok_addr);
+                let freeze_check = if let Some(freeze_field) = &attrs.mint_freeze_authority {
+                    quote! {
+                        if quasar_lang::utils::hint::unlikely(
+                            !__state.has_freeze_authority()
+                                || !quasar_lang::keys_eq(
+                                    __state.freeze_authority_unchecked(),
+                                    #freeze_field.address(),
+                                )
+                        ) {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                    }
+                } else {
+                    quote! {
+                        if quasar_lang::utils::hint::unlikely(__state.has_freeze_authority()) {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                    }
+                };
                 let validate = quote! {
-                    quasar_spl::validate_mint(#field_name, #auth_field.address())?;
+                    #owner_check
+                    if quasar_lang::utils::hint::unlikely(
+                        #field_name.data_len() < quasar_spl::MintAccountState::LEN
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    let __state = unsafe {
+                        &*(#field_name.data_ptr() as *const quasar_spl::MintAccountState)
+                    };
+                    if quasar_lang::utils::hint::unlikely(!__state.is_initialized()) {
+                        return Err(ProgramError::UninitializedAccount);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        !__state.has_mint_authority()
+                            || !quasar_lang::keys_eq(
+                                __state.mint_authority_unchecked(),
+                                #auth_field.address(),
+                            )
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    if quasar_lang::utils::hint::unlikely(
+                        __state.decimals() != (#decimals_expr) as u8
+                    ) {
+                        return Err(ProgramError::InvalidAccountData);
+                    }
+                    #freeze_check
                 };
                 init_blocks.push(wrap_init_block(
                     field_name,

@@ -1325,6 +1325,917 @@ fn test_init_if_needed_token_wrong_mint() {
 }
 
 // ---------------------------------------------------------------------------
+// Init-if-needed token: wrong authority
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_token_wrong_authority() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(payer, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let wrong_authority = Address::new_unique();
+    let token_account = Address::new_unique();
+    // Existing token account with wrong_authority as owner (not payer)
+    let token_account_obj = Account {
+        lamports: 1_000_000,
+        data: pack_token(mint, wrong_authority, 500),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededTokenInstruction {
+        payer,
+        token_account,
+        mint,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (token_account, token_account_obj),
+            (mint, mint_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed should fail when existing account has wrong authority"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed token: wrong token program owner
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_token_wrong_token_program_owner() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(payer, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let token_account = Address::new_unique();
+    // Token account owned by Token-2022 instead of SPL Token
+    let token_account_obj = Account {
+        lamports: 1_000_000,
+        data: pack_token(mint, payer, 500),
+        owner: quasar_spl::TOKEN_2022_ID,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededTokenInstruction {
+        payer,
+        token_account,
+        mint,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (token_account, token_account_obj),
+            (mint, mint_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed should fail when existing account owned by wrong token program"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed mint (no freeze authority)
+// ---------------------------------------------------------------------------
+
+fn pack_mint_with_freeze(
+    authority: Address,
+    decimals: u8,
+    freeze_authority: Option<Address>,
+) -> Vec<u8> {
+    let mint = Mint {
+        mint_authority: Some(authority).into(),
+        supply: 1_000_000_000,
+        decimals,
+        is_initialized: true,
+        freeze_authority: freeze_authority.into(),
+    };
+    let mut data = vec![0u8; Mint::LEN];
+    Pack::pack(mint, &mut data).unwrap();
+    data
+}
+
+#[test]
+fn test_init_if_needed_mint_new_account() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let mint_account = Account::default();
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "init_if_needed_mint should succeed for new account: {:?}",
+        result.program_result
+    );
+
+    let data: Mint = Pack::unpack(&result.resulting_accounts[1].1.data).unwrap();
+    assert_eq!(data.decimals, 6, "mint decimals should be 6");
+    assert_eq!(
+        data.mint_authority,
+        Some(mint_authority).into(),
+        "mint authority should match"
+    );
+    assert!(data.is_initialized, "mint should be initialized");
+    assert_eq!(
+        Option::<Address>::from(data.freeze_authority),
+        None,
+        "freeze authority should be None"
+    );
+    println!(
+        "  init_if_needed_mint (new): OK (CU: {})",
+        result.compute_units_consumed
+    );
+}
+
+#[test]
+fn test_init_if_needed_mint_existing_valid() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(mint_authority, 6),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "init_if_needed_mint should pass for existing valid mint: {:?}",
+        result.program_result
+    );
+    println!("  init_if_needed_mint (existing valid): OK");
+}
+
+#[test]
+fn test_init_if_needed_mint_wrong_decimals() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    // Existing mint with decimals=9, but instruction expects 6
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(mint_authority, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint should fail when existing mint has wrong decimals"
+    );
+}
+
+#[test]
+fn test_init_if_needed_mint_wrong_authority() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+    let wrong_authority = Address::new_unique();
+
+    let mint = Address::new_unique();
+    // Existing mint with wrong_authority, but instruction expects mint_authority
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(wrong_authority, 6),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint should fail when existing mint has wrong authority"
+    );
+}
+
+#[test]
+fn test_init_if_needed_mint_wrong_token_program_owner() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    // Existing mint owned by Token-2022, but instruction uses SPL Token
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(mint_authority, 6),
+        owner: quasar_spl::TOKEN_2022_ID,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint should fail when existing mint owned by wrong token program"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed mint: unexpected freeze authority
+// (no freeze_authority declared, but on-chain mint has one)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_mint_unexpected_freeze_authority() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+    let surprise_freeze = Address::new_unique();
+
+    let mint = Address::new_unique();
+    // On-chain mint has a freeze authority, but the instruction (discriminator=14)
+    // does NOT declare mint::freeze_authority — so None means "assert no freeze"
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint_with_freeze(mint_authority, 6, Some(surprise_freeze)),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintInstruction {
+        payer,
+        mint,
+        mint_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint should fail when on-chain mint has unexpected freeze authority"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed mint WITH freeze authority
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_mint_with_freeze_new_account() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let freeze_authority = Address::new_unique();
+    let freeze_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let mint_account = Account::default();
+
+    let mut instruction: Instruction = InitIfNeededMintWithFreezeInstruction {
+        payer,
+        mint,
+        mint_authority,
+        freeze_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (freeze_authority, freeze_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "init_if_needed_mint_with_freeze should succeed for new account: {:?}",
+        result.program_result
+    );
+
+    let data: Mint = Pack::unpack(&result.resulting_accounts[1].1.data).unwrap();
+    assert_eq!(data.decimals, 6);
+    assert_eq!(data.mint_authority, Some(mint_authority).into());
+    assert_eq!(
+        Option::<Address>::from(data.freeze_authority),
+        Some(freeze_authority),
+        "freeze authority should be set"
+    );
+    println!(
+        "  init_if_needed_mint_with_freeze (new): OK (CU: {})",
+        result.compute_units_consumed
+    );
+}
+
+#[test]
+fn test_init_if_needed_mint_with_freeze_existing_valid() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let freeze_authority = Address::new_unique();
+    let freeze_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint_with_freeze(mint_authority, 6, Some(freeze_authority)),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintWithFreezeInstruction {
+        payer,
+        mint,
+        mint_authority,
+        freeze_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (freeze_authority, freeze_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "init_if_needed_mint_with_freeze should pass for existing valid mint: {:?}",
+        result.program_result
+    );
+    println!("  init_if_needed_mint_with_freeze (existing valid): OK");
+}
+
+#[test]
+fn test_init_if_needed_mint_with_freeze_wrong_freeze_authority() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let freeze_authority = Address::new_unique();
+    let freeze_authority_account = Account::new(1_000_000, 0, &Address::default());
+    let wrong_freeze = Address::new_unique();
+
+    let mint = Address::new_unique();
+    // On-chain mint has wrong_freeze, but instruction expects freeze_authority
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint_with_freeze(mint_authority, 6, Some(wrong_freeze)),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintWithFreezeInstruction {
+        payer,
+        mint,
+        mint_authority,
+        freeze_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (freeze_authority, freeze_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint_with_freeze should fail when freeze authority doesn't match"
+    );
+}
+
+#[test]
+fn test_init_if_needed_mint_with_freeze_missing_on_chain() {
+    let mollusk = setup();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let mint_authority = Address::new_unique();
+    let mint_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let freeze_authority = Address::new_unique();
+    let freeze_authority_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    // On-chain mint has NO freeze authority, but instruction declares one
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(mint_authority, 6),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let mut instruction: Instruction = InitIfNeededMintWithFreezeInstruction {
+        payer,
+        mint,
+        mint_authority,
+        freeze_authority,
+        token_program,
+        system_program,
+    }
+    .into();
+
+    instruction.accounts[1].is_signer = true;
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (mint, mint_account),
+            (mint_authority, mint_authority_account),
+            (freeze_authority, freeze_authority_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_mint_with_freeze should fail when on-chain mint has no freeze authority"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed ATA: wrong authority (wallet)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_ata_wrong_authority() {
+    let mollusk = setup_with_ata();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+    let (ata_program, ata_program_account) = ata_program_account();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let wallet = Address::new_unique();
+    let wallet_account = Account::new(1_000_000, 0, &Address::default());
+    let wrong_wallet = Address::new_unique();
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(payer, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let (ata_addr, _) = get_associated_token_address_const(&wallet, &mint);
+    // ATA exists but is owned by wrong_wallet instead of wallet
+    let ata_account = Account {
+        lamports: 1_000_000,
+        data: pack_token(mint, wrong_wallet, 200),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let instruction: Instruction = InitIfNeededAtaInstruction {
+        payer,
+        ata: ata_addr,
+        wallet,
+        mint,
+        token_program,
+        system_program,
+        ata_program,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (ata_addr, ata_account),
+            (wallet, wallet_account),
+            (mint, mint_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+            (ata_program, ata_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_ata should fail when existing ATA has wrong authority (wallet)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed ATA: wrong mint
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_ata_wrong_mint() {
+    let mollusk = setup_with_ata();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+    let (ata_program, ata_program_account) = ata_program_account();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let wallet = Address::new_unique();
+    let wallet_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let wrong_mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(payer, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let (ata_addr, _) = get_associated_token_address_const(&wallet, &mint);
+    // ATA exists but with wrong_mint
+    let ata_account = Account {
+        lamports: 1_000_000,
+        data: pack_token(wrong_mint, wallet, 200),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let instruction: Instruction = InitIfNeededAtaInstruction {
+        payer,
+        ata: ata_addr,
+        wallet,
+        mint,
+        token_program,
+        system_program,
+        ata_program,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (ata_addr, ata_account),
+            (wallet, wallet_account),
+            (mint, mint_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+            (ata_program, ata_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_ata should fail when existing ATA has wrong mint"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Init-if-needed ATA: wrong token program owner
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_init_if_needed_ata_wrong_token_program_owner() {
+    let mollusk = setup_with_ata();
+    let (token_program, token_program_account) = token_program_account();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+    let (ata_program, ata_program_account) = ata_program_account();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let wallet = Address::new_unique();
+    let wallet_account = Account::new(1_000_000, 0, &Address::default());
+
+    let mint = Address::new_unique();
+    let mint_account = Account {
+        lamports: 1_000_000,
+        data: pack_mint(payer, 9),
+        owner: token_program,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let (ata_addr, _) = get_associated_token_address_const(&wallet, &mint);
+    // ATA exists but is owned by Token-2022 instead of SPL Token
+    let ata_account = Account {
+        lamports: 1_000_000,
+        data: pack_token(mint, wallet, 200),
+        owner: quasar_spl::TOKEN_2022_ID,
+        executable: false,
+        rent_epoch: 0,
+    };
+
+    let instruction: Instruction = InitIfNeededAtaInstruction {
+        payer,
+        ata: ata_addr,
+        wallet,
+        mint,
+        token_program,
+        system_program,
+        ata_program,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (ata_addr, ata_account),
+            (wallet, wallet_account),
+            (mint, mint_account),
+            (token_program, token_program_account),
+            (system_program, system_program_account),
+            (ata_program, ata_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_err(),
+        "init_if_needed_ata should fail when existing ATA owned by wrong token program"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Init ATA (#[account(init, associated_token::mint,
 // associated_token::authority)])
 // ---------------------------------------------------------------------------

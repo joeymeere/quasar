@@ -1,17 +1,10 @@
 use {
     crate::{
-        helpers::constants::{SPL_TOKEN_ID, TOKEN_2022_ID},
         instructions::TokenCpi,
         state::{MintAccountState, TokenAccountState},
     },
     quasar_lang::{prelude::*, utils::hint::unlikely},
 };
-
-#[inline(always)]
-fn is_token_program_owner(view: &AccountView) -> bool {
-    let owner = view.owner();
-    quasar_lang::keys_eq(owner, &SPL_TOKEN_ID) || quasar_lang::keys_eq(owner, &TOKEN_2022_ID)
-}
 
 /// Extension trait for token account initialization.
 ///
@@ -70,29 +63,12 @@ pub trait InitToken: AsAccountView + Sized {
         if quasar_lang::is_system_program(view.owner()) {
             self.init(system_program, payer, token_program, mint, owner, rent)
         } else {
-            if unlikely(!is_token_program_owner(view)) {
-                return Err(ProgramError::IllegalOwner);
-            }
-            if unlikely(view.data_len() < TokenAccountState::LEN) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            // SAFETY: Owner is a token program and `data_len >= LEN`
-            // checked above. `TokenAccountState` is `#[repr(C)]` with
-            // alignment 1.
-            let state = unsafe { &*(view.data_ptr() as *const TokenAccountState) };
-            if unlikely(!state.is_initialized()) {
-                return Err(ProgramError::UninitializedAccount);
-            }
-            if unlikely(!quasar_lang::keys_eq(
-                state.mint(),
+            validate_token_account(
+                view,
                 mint.to_account_view().address(),
-            )) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            if unlikely(!quasar_lang::keys_eq(state.owner(), owner)) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            Ok(())
+                owner,
+                token_program.address(),
+            )
         }
     }
 }
@@ -141,7 +117,8 @@ pub trait InitMint: AsAccountView + Sized {
     ///
     /// Checks `owner == system_program` to determine if the account needs
     /// initialization. When the account already exists, validates that its
-    /// mint authority matches the expected value.
+    /// mint authority, decimals, freeze authority, and token program ownership
+    /// match the expected values.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     fn init_if_needed(
@@ -166,31 +143,19 @@ pub trait InitMint: AsAccountView + Sized {
                 rent,
             )
         } else {
-            if unlikely(!is_token_program_owner(view)) {
-                return Err(ProgramError::IllegalOwner);
-            }
-            if unlikely(view.data_len() < MintAccountState::LEN) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            // SAFETY: Owner is a token program and `data_len >= LEN`
-            // checked above. `MintAccountState` is `#[repr(C)]` with
-            // alignment 1.
-            let state = unsafe { &*(view.data_ptr() as *const MintAccountState) };
-            if unlikely(!state.is_initialized()) {
-                return Err(ProgramError::UninitializedAccount);
-            }
-            if unlikely(
-                !state.has_mint_authority()
-                    || !quasar_lang::keys_eq(state.mint_authority_unchecked(), mint_authority),
-            ) {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            Ok(())
+            validate_mint(
+                view,
+                mint_authority,
+                decimals,
+                freeze_authority,
+                token_program.address(),
+            )
         }
     }
 }
 
-/// Validate that an existing token account has the expected mint and authority.
+/// Validate that an existing token account has the expected mint, authority,
+/// and token program ownership.
 ///
 /// Used by generated `#[account(init_if_needed, token::...)]` code when the
 /// account is already initialized.
@@ -199,8 +164,9 @@ pub fn validate_token_account(
     view: &AccountView,
     mint: &Address,
     authority: &Address,
+    token_program: &Address,
 ) -> Result<(), ProgramError> {
-    if unlikely(!is_token_program_owner(view)) {
+    if unlikely(!quasar_lang::keys_eq(view.owner(), token_program)) {
         return Err(ProgramError::IllegalOwner);
     }
     if unlikely(view.data_len() < TokenAccountState::LEN) {
@@ -221,13 +187,20 @@ pub fn validate_token_account(
     Ok(())
 }
 
-/// Validate that an existing mint account has the expected authority.
+/// Validate that an existing mint account matches the provided parameters.
 ///
 /// Used by generated `#[account(init_if_needed, mint::...)]` code when the
-/// account is already initialized.
+/// account is already initialized. `freeze_authority = None` asserts that the
+/// on-chain mint has no freeze authority set (matching Anchor's behavior).
 #[inline(always)]
-pub fn validate_mint(view: &AccountView, mint_authority: &Address) -> Result<(), ProgramError> {
-    if unlikely(!is_token_program_owner(view)) {
+pub fn validate_mint(
+    view: &AccountView,
+    mint_authority: &Address,
+    decimals: u8,
+    freeze_authority: Option<&Address>,
+    token_program: &Address,
+) -> Result<(), ProgramError> {
+    if unlikely(!quasar_lang::keys_eq(view.owner(), token_program)) {
         return Err(ProgramError::IllegalOwner);
     }
     if unlikely(view.data_len() < MintAccountState::LEN) {
@@ -244,6 +217,24 @@ pub fn validate_mint(view: &AccountView, mint_authority: &Address) -> Result<(),
             || !quasar_lang::keys_eq(state.mint_authority_unchecked(), mint_authority),
     ) {
         return Err(ProgramError::InvalidAccountData);
+    }
+    if unlikely(state.decimals() != decimals) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    match freeze_authority {
+        Some(expected) => {
+            if unlikely(
+                !state.has_freeze_authority()
+                    || !quasar_lang::keys_eq(state.freeze_authority_unchecked(), expected),
+            ) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        None => {
+            if unlikely(state.has_freeze_authority()) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
     }
     Ok(())
 }
