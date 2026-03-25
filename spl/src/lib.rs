@@ -7,9 +7,9 @@
 //!
 //! | Type | Owner check | Deref target | Use when |
 //! |------|-------------|--------------|----------|
-//! | `Account<Token>` | SPL Token only | [`TokenAccountState`] | Program only supports Token |
+//! | `Account<Token>` | SPL Token only | [`TokenAccountState`] | Token accounts (incl. ATAs) for SPL Token |
 //! | `Account<Mint>` | SPL Token only | [`MintAccountState`] | Mint owned by Token |
-//! | `InterfaceAccount<Token>` | SPL Token **or** Token-2022 | [`TokenAccountState`] | Program supports both |
+//! | `InterfaceAccount<Token>` | SPL Token **or** Token-2022 | [`TokenAccountState`] | Token accounts (incl. ATAs) for either program |
 //! | `InterfaceAccount<Mint>` | SPL Token **or** Token-2022 | [`MintAccountState`] | Mint from either program |
 //!
 //! # Program types
@@ -33,22 +33,8 @@
 //!
 //! # Token lifecycle
 //!
-//! Use `#[account(init)]` to auto-create token accounts, mints, and ATAs:
-//!
-//! ```ignore
-//! #[account(init, payer = payer, token::mint = mint, token::authority = authority)]
-//! pub token_account: &'info mut Account<Token>,
-//!
-//! // Or skip if already initialized (checks owner == system_program)
-//! self.new_token.init_if_needed(
-//!     self.system_program,
-//!     self.payer,
-//!     self.token_program,
-//!     self.mint,
-//!     self.owner.address(),
-//!     Some(&*self.rent), // or None to fetch via syscall
-//! )?;
-//! ```
+//! Use `#[account(init)]` to auto-create token accounts, mints, and ATAs.
+//! The derive macro handles `create_account` + `initialize_*` CPI calls.
 //!
 //! For closing, use the [`TokenClose`] trait on `Account<T>`:
 //!
@@ -59,14 +45,26 @@
 
 #![no_std]
 
-/// Implements `CheckOwner` for a type that is owned by exactly one program.
+/// Implements the full account type contract for a type owned by a single program.
 ///
-/// These types intentionally do NOT implement `Owner` — that would expose
-/// `Account<T>::close()` which performs a direct lamport drain. Token/mint
-/// accounts are owned by the SPL Token program, not the calling program,
-/// so the direct close would always fail at runtime. Instead, use the
-/// CPI-based `TokenClose` trait.
-macro_rules! impl_single_owner {
+/// Generates five trait implementations:
+///
+/// - `StaticView` — marks the type as having a fixed layout
+/// - `AsAccountView` — provides access to the underlying `AccountView`
+/// - `AccountCheck` — validates `data_len >= T::LEN`
+/// - `CheckOwner` — validates `owner == $id`
+/// - `Deref` / `DerefMut` → `$target` — zero-copy access to account data
+/// - `ZeroCopyDeref` — enables `InterfaceAccount<T>` to deref through this type
+///
+/// # Safety
+///
+/// The `Deref` / `DerefMut` impls perform `unsafe` pointer casts from the
+/// raw account data to `$target`. This is sound because:
+///
+/// 1. `AccountCheck::check` validated `data_len >= $target::LEN`
+/// 2. `$target` is `#[repr(C)]` with alignment 1 (any pointer is valid)
+/// 3. The owner check guarantees the data was written by the expected program
+macro_rules! impl_program_account {
     ($ty:ty, $id:expr, $target:ty) => {
         unsafe impl StaticView for $ty {}
 
@@ -139,7 +137,8 @@ macro_rules! impl_single_owner {
 }
 
 mod associated_token;
-mod helpers;
+mod close;
+mod constants;
 mod instructions;
 mod interface;
 #[cfg(feature = "metadata")]
@@ -147,22 +146,21 @@ pub mod metadata;
 mod state;
 mod token;
 mod token_2022;
+mod validate;
 
 pub use {
     associated_token::{
         create as ata_create, create_idempotent as ata_create_idempotent,
         get_associated_token_address, get_associated_token_address_const,
-        get_associated_token_address_with_program, get_associated_token_address_with_program_const,
-        validate_ata, AssociatedToken, AssociatedTokenProgram, InitAssociatedToken,
+        get_associated_token_address_with_program,
+        get_associated_token_address_with_program_const, AssociatedTokenProgram,
     },
-    helpers::{
-        close::TokenClose,
-        constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
-        init::{validate_mint, validate_token_account, InitMint, InitToken},
-    },
+    close::TokenClose,
+    constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
     instructions::{initialize_account3, initialize_mint2, TokenCpi},
     interface::{InterfaceAccount, TokenInterface},
-    state::{MintAccountState, TokenAccountState},
+    state::{COption, MintAccountState, TokenAccountState},
     token::{Mint, Token},
     token_2022::{Mint2022, Token2022},
+    validate::{validate_ata, validate_mint, validate_token_account},
 };
