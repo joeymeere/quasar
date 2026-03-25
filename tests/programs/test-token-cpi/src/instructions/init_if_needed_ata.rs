@@ -1,13 +1,13 @@
 use {
     quasar_lang::prelude::*,
-    quasar_spl::{AssociatedToken, AssociatedTokenProgram, Mint, Token},
+    quasar_spl::{AssociatedTokenProgram, Mint, Token},
 };
 
 #[derive(Accounts)]
 pub struct InitIfNeededAta<'info> {
     pub payer: &'info mut Signer,
     #[account(init_if_needed, associated_token::mint = mint, associated_token::authority = wallet)]
-    pub ata: &'info mut Account<AssociatedToken>,
+    pub ata: &'info mut Account<Token>,
     pub wallet: &'info Signer,
     pub mint: &'info Account<Mint>,
     pub token_program: &'info Program<Token>,
