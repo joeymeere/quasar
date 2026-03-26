@@ -16,6 +16,7 @@ edition = "2021"
 
 [dependencies]
 quasar-lang = "0.0"
+wincode = {{ version = "0.4", features = ["derive"] }}
 solana-address = "2"
 solana-instruction = "3"
 "#,
@@ -43,7 +44,7 @@ pub fn generate_client(parsed: &ParsedProgram) -> String {
     } else {
         out.push_str("use std::vec;\n");
     }
-    out.push_str("use quasar_lang::prelude::QuasarSerialize;\n");
+    out.push_str("use wincode::{SchemaWrite, SchemaRead};\n");
     out.push_str("use solana_address::Address;\n");
     out.push_str("use solana_instruction::{AccountMeta, Instruction};\n\n");
 
@@ -101,6 +102,7 @@ pub fn generate_client(parsed: &ParsedProgram) -> String {
 
     // --- Custom data type definitions ---
     for (type_name, fields) in &type_map {
+        out.push_str("#[derive(SchemaWrite, SchemaRead)]\n");
         writeln!(out, "pub struct {} {{", type_name).expect("write to String");
         for (field_name, field_ty) in fields {
             writeln!(
@@ -189,8 +191,13 @@ pub fn generate_client(parsed: &ParsedProgram) -> String {
             writeln!(out, "        let data = vec![{}];", disc_str).expect("write to String");
         } else {
             writeln!(out, "        let mut data = vec![{}];", disc_str).expect("write to String");
-            for (i, (name, _)) in ix.args.iter().enumerate() {
-                out.push_str(&serialize_expr(name, &arg_types[i], &type_map));
+            for (name, _) in &ix.args {
+                writeln!(
+                    out,
+                    "        data.extend_from_slice(&wincode::serialize(&ix.{}).unwrap());",
+                    name
+                )
+                .expect("write to String");
             }
         }
 
@@ -399,72 +406,6 @@ fn rust_field_type(ty: &IdlType) -> String {
         }
         IdlType::Defined { defined } => defined.clone(),
         IdlType::Tail { .. } => "Vec<u8>".to_string(),
-    }
-}
-
-/// Generate serialization code for an instruction argument.
-fn serialize_expr(
-    name: &str,
-    ty: &IdlType,
-    types: &HashMap<String, Vec<(String, IdlType)>>,
-) -> String {
-    match ty {
-        IdlType::Primitive(p) => match p.as_str() {
-            "bool" => format!("        data.push(ix.{} as u8);\n", name),
-            "u8" => format!("        data.push(ix.{});\n", name),
-            "i8" => format!("        data.push(ix.{} as u8);\n", name),
-            "publicKey" => {
-                format!("        data.extend_from_slice(ix.{}.as_ref());\n", name)
-            }
-            other if other.starts_with('[') => {
-                format!("        data.extend_from_slice(&ix.{});\n", name)
-            }
-            _ => format!(
-                "        data.extend_from_slice(&ix.{}.to_le_bytes());\n",
-                name
-            ),
-        },
-        IdlType::DynString { .. } => {
-            format!(
-                "        data.extend_from_slice(&(ix.{n}.len() as u32).to_le_bytes());\n\
-                 \x20       data.extend_from_slice(&ix.{n});\n",
-                n = name,
-            )
-        }
-        IdlType::DynVec { vec } => {
-            let item_ser = match &*vec.items {
-                IdlType::Primitive(p) if p == "publicKey" => "__item.as_ref()".to_string(),
-                IdlType::Primitive(p) if p == "u8" || p == "i8" || p == "bool" => {
-                    "&[*__item as u8]".to_string()
-                }
-                IdlType::Primitive(_) => "&__item.to_le_bytes()".to_string(),
-                _ => "__item.as_ref()".to_string(),
-            };
-            format!(
-                "        data.extend_from_slice(&(ix.{n}.len() as u32).to_le_bytes());\n\
-                 \x20       for __item in &ix.{n} {{ data.extend_from_slice({ser}); }}\n",
-                n = name,
-                ser = item_ser,
-            )
-        }
-        IdlType::Defined { defined } => {
-            if let Some(fields) = types.get(defined.as_str()) {
-                let mut result = String::new();
-                for (field_name, field_ty) in fields {
-                    result.push_str(&serialize_expr(
-                        &format!("{}.{}", name, field_name),
-                        field_ty,
-                        types,
-                    ));
-                }
-                result
-            } else {
-                format!("        // unknown type: {}\n", defined)
-            }
-        }
-        IdlType::Tail { .. } => {
-            format!("        data.extend_from_slice(&ix.{});\n", name)
-        }
     }
 }
 
