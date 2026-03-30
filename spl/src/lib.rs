@@ -36,10 +36,10 @@
 //! Use `#[account(init)]` to auto-create token accounts, mints, and ATAs.
 //! The derive macro handles `create_account` + `initialize_*` CPI calls.
 //!
-//! For closing, use the [`TokenClose`] trait on `Account<T>`:
+//! For closing, use `close_account` on the token program directly:
 //!
 //! ```ignore
-//! self.vault.close(&self.token_program, &self.maker, &self.escrow)
+//! self.token_program.close_account(&self.vault, &self.maker, &self.escrow)
 //!     .invoke_signed(&seeds)?;
 //! ```
 
@@ -138,7 +138,6 @@ macro_rules! impl_program_account {
 }
 
 mod associated_token;
-mod close;
 mod constants;
 mod instructions;
 mod interface;
@@ -156,7 +155,6 @@ pub use {
         get_associated_token_address_with_program, get_associated_token_address_with_program_const,
         AssociatedTokenProgram,
     },
-    close::TokenClose,
     constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
     instructions::{initialize_account3, initialize_mint2, TokenCpi},
     interface::{InterfaceAccount, TokenInterface},

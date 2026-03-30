@@ -1,7 +1,7 @@
 use {
     crate::{events::TakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+    quasar_spl::{Mint, Token, TokenCpi},
 };
 
 #[derive(Accounts)]
@@ -56,8 +56,8 @@ impl<'info> Take<'info> {
             )
             .invoke_signed(&seeds)?;
 
-        self.vault_ta_a
-            .close(self.token_program, self.taker, self.escrow)
+        self.token_program
+            .close_account(self.vault_ta_a, self.taker, self.escrow)
             .invoke_signed(&seeds)
     }
 

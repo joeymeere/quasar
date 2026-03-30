@@ -75,6 +75,12 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> Ctx<'info, T> {
             data: ctx.data,
         })
     }
+
+    /// Compile-time check for whether `T` has a custom `validate()` override.
+    #[inline(always)]
+    pub const fn has_validate(&self) -> bool {
+        T::HAS_VALIDATE
+    }
 }
 
 /// Like [`Ctx`] but also captures the remaining accounts region.
@@ -126,6 +132,12 @@ impl<'info, T: ParseAccounts<'info> + AccountCount> CtxWithRemaining<'info, T> {
             declared,
             accounts_boundary: ctx.accounts_boundary,
         })
+    }
+
+    /// Compile-time check for whether `T` has a custom `validate()` override.
+    #[inline(always)]
+    pub const fn has_validate(&self) -> bool {
+        T::HAS_VALIDATE
     }
 
     #[inline(always)]

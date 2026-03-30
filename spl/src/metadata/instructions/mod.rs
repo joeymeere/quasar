@@ -17,7 +17,7 @@ mod utilize;
 mod verify_collection;
 
 use quasar_lang::{
-    borsh::{BorshString, CpiEncode},
+    borsh::CpiEncode,
     cpi::{BufCpiCall, CpiCall},
     prelude::*,
 };
@@ -90,9 +90,9 @@ pub trait MetadataCpi: AsAccountView {
         metadata: &'a impl AsAccountView,
         update_authority: &'a impl AsAccountView,
         new_update_authority: Option<&Address>,
-        name: Option<BorshString<'_>>,
-        symbol: Option<BorshString<'_>>,
-        uri: Option<BorshString<'_>>,
+        name: Option<&[u8]>,
+        symbol: Option<&[u8]>,
+        uri: Option<&[u8]>,
         seller_fee_basis_points: Option<u16>,
         primary_sale_happened: Option<bool>,
         is_mutable: Option<bool>,

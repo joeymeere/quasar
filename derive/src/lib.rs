@@ -24,7 +24,7 @@ mod event;
 mod helpers;
 mod instruction;
 mod program;
-mod writebytes;
+mod serialize;
 
 /// Derive account parsing and validation for an instruction's accounts struct.
 ///
@@ -202,7 +202,7 @@ pub fn emit_cpi(input: TokenStream) -> TokenStream {
 /// All field types must implement wincode's `SchemaWrite` and `SchemaRead`.
 #[proc_macro_derive(QuasarSerialize)]
 pub fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
-    writebytes::derive_write_bytes(input)
+    serialize::derive_quasar_serialize(input)
 }
 
 /// Declare an external program for CPI, generating typed helpers from its IDL.

@@ -9,6 +9,19 @@ use {
     quasar_lang::{prelude::*, utils::hint::unlikely},
 };
 
+#[inline(always)]
+fn validate_token_program(token_program: &Address) -> Result<(), ProgramError> {
+    if quasar_lang::utils::hint::unlikely(
+        !quasar_lang::keys_eq(token_program, &crate::SPL_TOKEN_ID)
+            && !quasar_lang::keys_eq(token_program, &crate::TOKEN_2022_ID),
+    ) {
+        #[cfg(feature = "debug")]
+        quasar_lang::prelude::log("Invalid token program");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    Ok(())
+}
+
 /// Validate that an existing token account has the expected mint, authority,
 /// and token program ownership.
 ///
@@ -34,16 +47,7 @@ pub fn validate_token_account(
     token_program: &Address,
 ) -> Result<(), ProgramError> {
     // Verify the token program is a known SPL token program.
-    if unlikely(
-        !quasar_lang::keys_eq(token_program, &crate::SPL_TOKEN_ID)
-            && !quasar_lang::keys_eq(token_program, &crate::TOKEN_2022_ID),
-    ) {
-        #[cfg(feature = "debug")]
-        quasar_lang::prelude::log(
-            "validate_token_account: token_program is not SPL Token or Token-2022",
-        );
-        return Err(ProgramError::IncorrectProgramId);
-    }
+    validate_token_program(token_program)?;
     if unlikely(!quasar_lang::keys_eq(view.owner(), token_program)) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_token_account: wrong program owner");
@@ -103,14 +107,7 @@ pub fn validate_mint(
     token_program: &Address,
 ) -> Result<(), ProgramError> {
     // Verify the token program is a known SPL token program.
-    if unlikely(
-        !quasar_lang::keys_eq(token_program, &crate::SPL_TOKEN_ID)
-            && !quasar_lang::keys_eq(token_program, &crate::TOKEN_2022_ID),
-    ) {
-        #[cfg(feature = "debug")]
-        quasar_lang::prelude::log("validate_mint: token_program is not SPL Token or Token-2022");
-        return Err(ProgramError::IncorrectProgramId);
-    }
+    validate_token_program(token_program)?;
     if unlikely(!quasar_lang::keys_eq(view.owner(), token_program)) {
         #[cfg(feature = "debug")]
         quasar_lang::prelude::log("validate_mint: wrong program owner");

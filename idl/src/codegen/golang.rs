@@ -427,7 +427,26 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
                 format!("\tdata = append(data, input.{}...)\n", name)
             }
         }
-        IdlType::DynVec { .. } | IdlType::Tail { .. } => {
+        IdlType::DynVec { vec } => match vec.prefix_bytes {
+            1 => format!(
+                "\tdata = append(data, byte(len(input.{n})))\n\tdata = append(data, \
+                 input.{n}...)\n",
+                n = name,
+            ),
+            2 => format!(
+                "\t{{ var buf [2]byte; binary.LittleEndian.PutUint16(buf[:], \
+                 uint16(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
+                 input.{n}...) }}\n",
+                n = name,
+            ),
+            _ => format!(
+                "\t{{ var buf [4]byte; binary.LittleEndian.PutUint32(buf[:], \
+                 uint32(len(input.{n}))); data = append(data, buf[:]...); data = append(data, \
+                 input.{n}...) }}\n",
+                n = name,
+            ),
+        },
+        IdlType::Tail { .. } => {
             format!("\tdata = append(data, input.{}...)\n", name,)
         }
     }
@@ -563,7 +582,27 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 )
             }
         }
-        IdlType::DynVec { .. } | IdlType::Tail { .. } => format!(
+        IdlType::DynVec { vec } => match vec.prefix_bytes {
+            1 => format!(
+                "{t}{n}Len := int(data[offset])\n{t}offset += 1\n{t}{n} := \
+                 data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+            2 => format!(
+                "{t}{n}Len := int(binary.LittleEndian.Uint16(data[offset:]))\n{t}offset += \
+                 2\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+            _ => format!(
+                "{t}{n}Len := int(binary.LittleEndian.Uint32(data[offset:]))\n{t}offset += \
+                 4\n{t}{n} := data[offset:offset+{n}Len]\n{t}offset += {n}Len\n",
+                t = t,
+                n = name,
+            ),
+        },
+        IdlType::Tail { .. } => format!(
             "{t}{n} := data[offset:] // remaining bytes\n{t}_ = {n}\n",
             t = t,
             n = name,

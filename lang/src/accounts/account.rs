@@ -192,7 +192,8 @@ impl<T: Owner + AsAccountView + crate::traits::Discriminator> Account<T> {
     /// Close a program-owned account: zero discriminator, drain lamports,
     /// reassign to system program, resize to zero.
     ///
-    /// For token/mint accounts, use the CPI-based `TokenClose` trait instead.
+    /// For token/mint accounts, use `token_program.close_account()` CPI
+    /// instead.
     #[inline(always)]
     pub fn close(&mut self, destination: &AccountView) -> Result<(), ProgramError> {
         // SAFETY: Same `#[repr(transparent)]` chain as `realloc` above.

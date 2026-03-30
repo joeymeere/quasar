@@ -388,26 +388,30 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
             }
             _ => format!("    data += input.{}  # unsupported\n", name),
         },
-        IdlType::DynString { .. } => {
+        IdlType::DynString { string } => {
+            let (fmt, _sz) = prefix_fmt(string.prefix_bytes);
             format!(
-                "    _b = input.{n}.encode(\"utf-8\")\n\x20   data += struct.pack(\"<I\", \
-                 len(_b))\n\x20   data += _b\n",
+                "    _b = input.{n}.encode(\"utf-8\")\n    data += struct.pack(\"<{fmt}\", \
+                 len(_b))\n    data += _b\n",
                 n = name,
+                fmt = fmt,
             )
         }
         IdlType::DynVec { vec } => {
+            let (fmt, _sz) = prefix_fmt(vec.prefix_bytes);
             let item_ser = match &*vec.items {
                 IdlType::Primitive(p) if p == "publicKey" => "bytes(item)".to_string(),
                 IdlType::Primitive(p) => {
-                    let fmt = struct_format(p);
-                    format!("struct.pack(\"<{}\", item)", fmt)
+                    let f = struct_format(p);
+                    format!("struct.pack(\"<{}\", item)", f)
                 }
                 _ => "item".to_string(),
             };
             format!(
-                "    data += struct.pack(\"<I\", len(input.{n}))\n\x20   for item in \
-                 input.{n}:\n\x20       data += {ser}\n",
+                "    data += struct.pack(\"<{fmt}\", len(input.{n}))\n    for item in \
+                 input.{n}:\n        data += {ser}\n",
                 n = name,
+                fmt = fmt,
                 ser = item_ser,
             )
         }
@@ -490,36 +494,42 @@ fn decode_field_expr(name: &str, ty: &IdlType, indent: usize, types: &[IdlTypeDe
                 )
             }
         },
-        IdlType::DynString { .. } => format!(
-            "{pad}_len = struct.unpack_from(\"<I\", data, offset)[0]\n{pad}offset += 4\n{pad}{n} \
-             = data[offset:offset + _len].decode(\"utf-8\")\n{pad}offset += _len\n",
-            pad = pad,
-            n = name,
-        ),
+        IdlType::DynString { string } => {
+            let (fmt, sz) = prefix_fmt(string.prefix_bytes);
+            format!(
+                "{pad}_len = struct.unpack_from(\"<{fmt}\", data, offset)[0]\n{pad}offset += \
+                 {sz}\n{pad}{n} = data[offset:offset + _len].decode(\"utf-8\")\n{pad}offset += \
+                 _len\n",
+                pad = pad,
+                n = name,
+                fmt = fmt,
+                sz = sz,
+            )
+        }
         IdlType::DynVec { vec } => {
+            let (fmt, sz) = prefix_fmt(vec.prefix_bytes);
             let item_decode = match &*vec.items {
                 IdlType::Primitive(p) if p == "publicKey" => {
                     "Pubkey.from_bytes(data[offset:offset + 32]); offset += 32".to_string()
                 }
                 IdlType::Primitive(p) => {
-                    let fmt = struct_format(p);
-                    let sz = primitive_size(p);
+                    let f = struct_format(p);
+                    let item_sz = primitive_size(p);
                     format!(
                         "struct.unpack_from(\"<{}\", data, offset)[0]; offset += {}",
-                        fmt, sz
+                        f, item_sz
                     )
                 }
                 _ => "data[offset:offset + 1]; offset += 1".to_string(),
             };
             format!(
-                "{pad}_count = struct.unpack_from(\"<I\", data, offset)[0]\n\
-                 {pad}offset += 4\n\
-                 {pad}{n} = []\n\
-                 {pad}for _ in range(_count):\n\
-                 {pad}    _item = {decode}\n\
-                 {pad}    {n}.append(_item)\n",
+                "{pad}_count = struct.unpack_from(\"<{fmt}\", data, offset)[0]\n{pad}offset += \
+                 {sz}\n{pad}{n} = []\n{pad}for _ in range(_count):\n{pad}    _item = \
+                 {decode}\n{pad}    {n}.append(_item)\n",
                 pad = pad,
                 n = name,
+                fmt = fmt,
+                sz = sz,
                 decode = item_decode,
             )
         }
@@ -571,6 +581,15 @@ fn parse_fixed_array_size(p: &str) -> Option<usize> {
     let inner = p.strip_prefix('[')?.strip_suffix(']')?;
     let (_, size_str) = inner.split_once(';')?;
     size_str.trim().parse().ok()
+}
+
+/// Returns the `struct` format character and byte size for a length prefix.
+fn prefix_fmt(prefix_bytes: usize) -> (&'static str, usize) {
+    match prefix_bytes {
+        1 => ("B", 1),
+        2 => ("H", 2),
+        _ => ("I", 4),
+    }
 }
 
 fn struct_format(primitive: &str) -> &'static str {

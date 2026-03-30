@@ -1,4 +1,4 @@
-//! Miri UB tests for quasar-core unsafe code paths.
+//! Miri UB tests for quasar-lang unsafe code paths.
 //!
 //! **Design philosophy: adversarial.** Tests are designed to FIND undefined
 //! behavior, not merely confirm correct output. Each test exercises a specific
@@ -10,7 +10,7 @@
 //!
 //! ```sh
 //! MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
-//!   cargo +nightly miri test -p quasar-core --test miri
+//!   cargo +nightly miri test -p quasar-lang --test miri
 //! ```
 //!
 //! ## Flags

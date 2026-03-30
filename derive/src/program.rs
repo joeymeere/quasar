@@ -373,6 +373,9 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    // Suppress dead_code warnings on the user's #[program] module.
+    // Instruction handlers and account structs inside it are only referenced
+    // from macro-generated dispatch code, which the compiler can't see.
     module.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
 
     quote! {

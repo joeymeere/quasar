@@ -49,7 +49,9 @@ struct IdlField {
 enum IdlType {
     Primitive(String),
     Defined {
-        #[allow(dead_code)]
+        // Required for serde deserialization of `{"defined": "TypeName"}` JSON
+        // objects. Not used in codegen — `map_idl_type` returns an error for
+        // all defined types, but includes `defined` in the error message.
         defined: String,
     },
 }
@@ -290,14 +292,15 @@ pub fn declare_program(input: TokenStream) -> TokenStream {
             .args
             .iter()
             .map(|a| {
-                let info = map_idl_type(&a.ty).unwrap();
+                let info = map_idl_type(&a.ty).expect("failed to map IDL type to Rust type");
                 let name = Ident::new(&pascal_to_snake(&a.name), Span::call_site());
                 let ty = &info.rust_type;
                 quote! { #name: #ty }
             })
             .collect();
 
-        let (data_write, data_size) = generate_data_write(&ix.args, &ix.discriminator).unwrap();
+        let (data_write, data_size) = generate_data_write(&ix.args, &ix.discriminator)
+            .expect("failed to generate instruction data write code");
 
         // Free function: accounts as &'a AccountView
         let free_acct_params: Vec<TokenStream2> = acct_idents

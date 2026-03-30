@@ -1,5 +1,5 @@
 use quasar_lang::{
-    borsh::BorshString,
+    borsh::CpiEncode,
     cpi::{BufCpiCall, InstructionAccount},
     prelude::*,
 };
@@ -13,25 +13,25 @@ pub fn update_metadata_accounts_v2<'a>(
     metadata: &'a AccountView,
     update_authority: &'a AccountView,
     new_update_authority: Option<&Address>,
-    name: Option<BorshString<'_>>,
-    symbol: Option<BorshString<'_>>,
-    uri: Option<BorshString<'_>>,
+    name: Option<&[u8]>,
+    symbol: Option<&[u8]>,
+    uri: Option<&[u8]>,
     seller_fee_basis_points: Option<u16>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
 ) -> BufCpiCall<'a, 2, 512> {
-    if let Some(ref n) = name {
-        if n.0.len() > super::MAX_NAME_LEN {
+    if let Some(n) = name {
+        if n.len() > super::MAX_NAME_LEN {
             metadata_field_panic();
         }
     }
-    if let Some(ref s) = symbol {
-        if s.0.len() > super::MAX_SYMBOL_LEN {
+    if let Some(s) = symbol {
+        if s.len() > super::MAX_SYMBOL_LEN {
             metadata_field_panic();
         }
     }
-    if let Some(ref u) = uri {
-        if u.0.len() > super::MAX_URI_LEN {
+    if let Some(u) = uri {
+        if u.len() > super::MAX_URI_LEN {
             metadata_field_panic();
         }
     }
@@ -51,9 +51,9 @@ pub fn update_metadata_accounts_v2<'a>(
                 core::ptr::write(ptr.add(offset), 1u8); // Some
                 offset += 1;
 
-                offset = n.write_to(ptr, offset);
-                offset = s.write_to(ptr, offset);
-                offset = u.write_to(ptr, offset);
+                offset = CpiEncode::<4>::write_to(&n, ptr, offset);
+                offset = CpiEncode::<4>::write_to(&s, ptr, offset);
+                offset = CpiEncode::<4>::write_to(&u, ptr, offset);
 
                 // seller_fee_basis_points
                 let fee = seller_fee_basis_points.unwrap_or(0);

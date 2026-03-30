@@ -16,5 +16,5 @@ quasar-lang = { path = "../../../lang" }
 
 [features]
 default = ["alloc"]
-alloc = ["quasar-lang/alloc"]
+alloc = []
 debug = []

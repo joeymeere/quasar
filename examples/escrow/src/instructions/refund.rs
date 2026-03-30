@@ -1,7 +1,7 @@
 use {
     crate::{events::RefundEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+    quasar_spl::{Mint, Token, TokenCpi},
 };
 
 #[derive(Accounts)]
@@ -37,8 +37,8 @@ impl<'info> Refund<'info> {
             )
             .invoke_signed(&seeds)?;
 
-        self.vault_ta_a
-            .close(self.token_program, self.maker, self.escrow)
+        self.token_program
+            .close_account(self.vault_ta_a, self.maker, self.escrow)
             .invoke_signed(&seeds)
     }
 
