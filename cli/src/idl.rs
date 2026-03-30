@@ -1,164 +1,71 @@
 use {
     crate::{error::CliResult, IdlCommand},
-    quasar_idl::{codegen, parser},
+    quasar_idl::{codegen, parser, types::Idl},
     std::path::{Path, PathBuf},
 };
 
-/// Generate IDL and client crates for a program.
-///
-/// Outputs:
-/// - `target/idl/<name>.idl.json` (always)
-/// - `target/client/rust/<name>-client/` when languages contains "rust"
-/// - `target/client/typescript/<name>/` when languages contains "typescript"
-/// - `target/client/python/<name>/` when languages contains "python"
-/// - `target/client/golang/<name>/` when languages contains "golang"
-pub fn generate(crate_path: &Path, languages: &[&str]) -> CliResult {
-    // Parse the program
+/// Parse program source, write IDL JSON and Rust client.
+/// Returns the IDL for optional downstream client generation.
+fn generate_idl(crate_path: &Path) -> Result<Idl, anyhow::Error> {
     let parsed = parser::parse_program(crate_path);
 
-    // Generate Rust client code before build_idl consumes parsed
-    let (client_code, client_cargo_toml) = if languages.contains(&"rust") {
-        let pdas = codegen::rust::has_pdas(&parsed);
-        (
-            Some(codegen::rust::generate_client(&parsed)),
-            Some(codegen::rust::generate_cargo_toml(
-                &parsed.crate_name,
-                &parsed.version,
-                pdas,
-            )),
-        )
-    } else {
-        (None, None)
-    };
+    // Rust client needs the parsed AST (not just IDL), generate before build_idl
+    // consumes it.
+    let pdas = codegen::rust::has_pdas(&parsed);
+    let client_code = codegen::rust::generate_client(&parsed);
+    let client_cargo_toml =
+        codegen::rust::generate_cargo_toml(&parsed.crate_name, &parsed.version, pdas);
 
-    // Build the IDL
     let idl = parser::build_idl(parsed);
 
-    // Write IDL JSON to target/idl/
+    // Write IDL JSON
     let idl_dir = PathBuf::from("target").join("idl");
     std::fs::create_dir_all(&idl_dir)?;
-
-    let idl_path = idl_dir.join(format!("{}.idl.json", idl.metadata.name));
+    let idl_path = idl_dir.join(format!("{}.json", idl.metadata.name));
     let json = serde_json::to_string_pretty(&idl)
         .map_err(|e| anyhow::anyhow!("failed to serialize IDL: {e}"))?;
     std::fs::write(&idl_path, &json)?;
 
-    // TypeScript client
-    if languages.contains(&"typescript") {
-        let ts_code = codegen::typescript::generate_ts_client(&idl);
-        let ts_kit_code = codegen::typescript::generate_ts_client_kit(&idl);
+    // Write Rust client
+    let client_dir = PathBuf::from("target")
+        .join("client")
+        .join("rust")
+        .join(format!("{}-client", idl.metadata.crate_name));
+    std::fs::create_dir_all(&client_dir)?;
+    std::fs::write(client_dir.join("Cargo.toml"), &client_cargo_toml)?;
 
-        // Write TypeScript clients to target/client/typescript/<name>/
-        let ts_dir = PathBuf::from("target")
-            .join("client")
-            .join("typescript")
-            .join(&idl.metadata.name);
-        std::fs::create_dir_all(&ts_dir)?;
-        std::fs::write(ts_dir.join("web3.ts"), &ts_code)?;
-        std::fs::write(ts_dir.join("kit.ts"), &ts_kit_code)?;
-
-        // Write package.json for the TS client
-        let needs_codecs =
-            !idl.types.is_empty() || idl.instructions.iter().any(|ix| !ix.args.is_empty());
-        let codecs_dep = if needs_codecs {
-            "\n    \"@solana/codecs\": \"^6.2.0\","
-        } else {
-            ""
-        };
-        let ts_package_json = format!(
-            r#"{{
-  "name": "{crate_name}-client",
-  "version": "{version}",
-  "private": true,
-  "exports": {{
-    "./web3.js": "./web3.ts",
-    "./kit": "./kit.ts"
-  }},
-  "dependencies": {{{codecs_dep}
-    "@solana/kit": "^6.0.0",
-    "@solana/web3.js": "github:blueshift-gg/web3.js#v2"
-  }}
-}}
-"#,
-            crate_name = idl.metadata.crate_name,
-            version = idl.metadata.version,
-        );
-        std::fs::write(ts_dir.join("package.json"), &ts_package_json)?;
+    let src_dir = client_dir.join("src");
+    if src_dir.exists() {
+        std::fs::remove_dir_all(&src_dir)?;
     }
-
-    // Rust client
-    if let (Some(files), Some(cargo_toml)) = (client_code, client_cargo_toml) {
-        let crate_name = &idl.metadata.crate_name;
-        let client_dir = PathBuf::from("target")
-            .join("client")
-            .join("rust")
-            .join(format!("{}-client", crate_name));
-
-        std::fs::create_dir_all(&client_dir)?;
-        std::fs::write(client_dir.join("Cargo.toml"), &cargo_toml)?;
-
-        // Remove stale src/ from previous runs before writing new files
-        let src_dir = client_dir.join("src");
-        if src_dir.exists() {
-            std::fs::remove_dir_all(&src_dir)?;
+    for (path, content) in &client_code {
+        let file_path = src_dir.join(path);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        for (path, content) in &files {
-            let file_path = src_dir.join(path);
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&file_path, content)?;
-        }
+        std::fs::write(&file_path, content)?;
     }
 
-    // Python client
-    if languages.contains(&"python") {
-        let py_code = codegen::python::generate_python_client(&idl);
-        let crate_name = &idl.metadata.crate_name;
-        let py_dir = PathBuf::from("target")
-            .join("client")
-            .join("python")
-            .join(crate_name);
-        std::fs::create_dir_all(&py_dir)?;
-
-        std::fs::write(py_dir.join("client.py"), &py_code)?;
-        std::fs::write(
-            py_dir.join("__init__.py"),
-            "from .client import *  # noqa: F401,F403\n",
-        )?;
-    }
-
-    // Go client
-    if languages.contains(&"golang") {
-        let go_code = codegen::golang::generate_go_client(&idl);
-        let crate_name = &idl.metadata.crate_name;
-        let go_pkg = crate_name.replace('-', "_");
-        let go_dir = PathBuf::from("target")
-            .join("client")
-            .join("golang")
-            .join(&go_pkg);
-        std::fs::create_dir_all(&go_dir)?;
-
-        std::fs::write(go_dir.join("client.go"), &go_code)?;
-        std::fs::write(
-            go_dir.join("go.mod"),
-            codegen::golang::generate_go_mod(&go_pkg),
-        )?;
-    }
-
-    Ok(())
+    Ok(idl)
 }
 
+/// Called by `quasar idl <path>` — generates IDL JSON + Rust client only.
 pub fn run(command: IdlCommand) -> CliResult {
     let crate_path = &command.crate_path;
-
     if !crate_path.exists() {
         eprintln!("Error: path does not exist: {}", crate_path.display());
         std::process::exit(1);
     }
 
-    // `quasar idl` generates all available languages
-    generate(crate_path, &["rust", "typescript", "python", "golang"])?;
+    generate_idl(crate_path)?;
     println!("  {}", crate::style::success("IDL generated"));
+    Ok(())
+}
+
+/// Called by `quasar build` — generates IDL + Rust client + configured language
+/// clients.
+pub fn generate(crate_path: &Path, languages: &[&str]) -> CliResult {
+    let idl = generate_idl(crate_path)?;
+    crate::client::generate_clients(&idl, languages)?;
     Ok(())
 }

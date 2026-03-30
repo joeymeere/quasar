@@ -6,6 +6,7 @@ use {
 pub mod build;
 pub mod cfg;
 pub mod clean;
+pub mod client;
 pub mod config;
 pub mod deploy;
 pub mod dump;
@@ -50,6 +51,8 @@ pub enum Command {
     Config(ConfigCommand),
     /// Generate the IDL for a program crate
     Idl(IdlCommand),
+    /// Generate client code from the program IDL
+    Client(ClientCommand),
     /// Measure compute-unit usage
     Profile(ProfileCommand),
     /// Dump sBPF assembly
@@ -218,6 +221,18 @@ pub struct IdlCommand {
     pub crate_path: PathBuf,
 }
 
+#[derive(Args, Debug)]
+pub struct ClientCommand {
+    /// Path to an IDL JSON file (e.g. target/idl/my_program.json)
+    #[arg(value_name = "IDL")]
+    pub idl_path: PathBuf,
+
+    /// Languages to generate (default: all). Comma-separated.
+    /// Options: typescript, python, golang
+    #[arg(long, value_delimiter = ',', value_name = "LANG")]
+    pub lang: Vec<String>,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct DumpCommand {
     /// Path to a compiled .so (auto-detected from target/deploy/ if omitted)
@@ -325,6 +340,7 @@ pub fn run(cli: Cli) -> CliResult {
         Command::Clean(cmd) => clean::run(cmd.all),
         Command::Config(cmd) => cfg::run(cmd.action),
         Command::Idl(cmd) => idl::run(cmd),
+        Command::Client(cmd) => client::run(cmd),
         Command::Dump(cmd) => dump::run(cmd.elf_path, cmd.function, cmd.source),
         Command::Completions(cmd) => {
             clap_complete::generate(
@@ -412,6 +428,10 @@ pub fn print_help() {
     print_cmd("clean   [-a]", "Remove build artifacts");
     print_cmd("config  [get|set|list|reset]", "Manage global settings");
     print_cmd("idl     <path>", "Generate the program IDL");
+    print_cmd(
+        "client  <idl> [--lang ts,py,go]",
+        "Generate client code from IDL",
+    );
     print_cmd(
         "profile [elf] [--expand] [--diff] [-w]",
         "Measure compute-unit usage",

@@ -217,7 +217,7 @@ pub fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// quasar::declare_program!(
 ///     my_program,
-///     "target/idl/my_program.idl.json"
+///     "target/idl/my_program.json"
 /// );
 ///
 /// // Free function style:
