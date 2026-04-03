@@ -14,7 +14,7 @@ SBF_EXAMPLES := examples/vault examples/escrow examples/multisig
 SBF_ALL := $(SBF_EXAMPLES) $(SBF_TEST_PROGRAMS)
 
 .PHONY: format format-fix clippy clippy-fix check-features \
-	build build-sbf test bench-cu test-miri test-miri-strict test-all nightly-version
+	build build-sbf test bench-cu bench-tracked compare-tracked test-miri test-miri-strict test-all nightly-version
 
 # Print the nightly toolchain version for CI
 nightly-version:
@@ -62,6 +62,14 @@ bench-cu:
 	@cargo test -p quasar-vault -- --nocapture 2>&1 | grep -E '(DEPOSIT|WITHDRAW) CU:'
 	@echo "Running escrow CU benchmark..."
 	@cargo test -p quasar-escrow -- --nocapture 2>&1 | grep -E '(MAKE|TAKE|REFUND) CU:'
+
+bench-tracked:
+	@bash scripts/bench-tracked-programs.sh capture target/tracked-metrics.env
+	@cat target/tracked-metrics.env
+
+compare-tracked:
+	@bash scripts/bench-tracked-programs.sh capture target/tracked-metrics.env
+	@bash scripts/bench-tracked-programs.sh compare scripts/perf-baselines.env target/tracked-metrics.env
 
 test-miri:
 	@MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \

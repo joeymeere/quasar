@@ -72,6 +72,15 @@ jobs:
       - name: Check all feature combinations
         run: make check-features
 
+  workspace_policy:
+    name: Workspace Policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify workspace lint opt-in
+        run: bash scripts/check-workspace-lints.sh
+
   cargo_test:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -129,7 +138,7 @@ jobs:
         run: make test-miri
 
   cu_benchmark_pr:
-    name: CU Benchmark (PR)
+    name: CU Benchmark Guard (PR)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -161,39 +170,42 @@ jobs:
             ${{ runner.os }}-cargo-bench-
       - uses: dtolnay/rust-toolchain@stable
 
-      # --- Base branch CU ---
-      - name: Build & bench base
+      - name: Capture base metrics
         run: |
           git checkout -f ${{ github.event.pull_request.base.sha }}
-          cargo build-sbf --manifest-path examples/vault/Cargo.toml
-          cargo test -p quasar-vault -- --nocapture 2>&1 | tee /tmp/base_output.txt
-          echo "DEPOSIT_BASE=$(grep 'DEPOSIT CU:' /tmp/base_output.txt | head -1 | grep -oE '[0-9]+')" >> $GITHUB_ENV
-          echo "WITHDRAW_BASE=$(grep 'WITHDRAW CU:' /tmp/base_output.txt | head -1 | grep -oE '[0-9]+')" >> $GITHUB_ENV
-          BASE_BIN=$(find target -name "quasar_vault.so" -path "*/deploy/*" | head -1)
-          echo "SIZE_BASE=$(wc -c < "$BASE_BIN" | tr -d ' ')" >> $GITHUB_ENV
+          bash scripts/bench-tracked-programs.sh capture /tmp/base_metrics.env
 
-      # --- PR head CU ---
-      - name: Build & bench PR
+      - name: Capture PR metrics
         run: |
           git checkout -f ${{ github.event.pull_request.head.sha }}
-          cargo build-sbf --manifest-path examples/vault/Cargo.toml
-          cargo test -p quasar-vault -- --nocapture 2>&1 | tee /tmp/pr_output.txt
-          echo "DEPOSIT_PR=$(grep 'DEPOSIT CU:' /tmp/pr_output.txt | head -1 | grep -oE '[0-9]+')" >> $GITHUB_ENV
-          echo "WITHDRAW_PR=$(grep 'WITHDRAW CU:' /tmp/pr_output.txt | head -1 | grep -oE '[0-9]+')" >> $GITHUB_ENV
-          PR_BIN=$(find target -name "quasar_vault.so" -path "*/deploy/*" | head -1)
-          echo "SIZE_PR=$(wc -c < "$PR_BIN" | tr -d ' ')" >> $GITHUB_ENV
+          bash scripts/bench-tracked-programs.sh capture /tmp/pr_metrics.env
 
-      # --- Post comment ---
-      - name: Post CU benchmark comment
+      - name: Fail on CU regression
+        id: perf_guard
+        run: |
+          bash scripts/bench-tracked-programs.sh compare /tmp/base_metrics.env /tmp/pr_metrics.env
+
+      - name: Post benchmark comment
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            const deposit_base = parseInt(process.env.DEPOSIT_BASE) || 0;
-            const deposit_pr = parseInt(process.env.DEPOSIT_PR) || 0;
-            const withdraw_base = parseInt(process.env.WITHDRAW_BASE) || 0;
-            const withdraw_pr = parseInt(process.env.WITHDRAW_PR) || 0;
-            const size_base = parseInt(process.env.SIZE_BASE) || 0;
-            const size_pr = parseInt(process.env.SIZE_PR) || 0;
+            const fs = require('fs');
+
+            function readEnv(path) {
+              const env = {};
+              for (const line of fs.readFileSync(path, 'utf8').split('\n')) {
+                if (!line || line.startsWith('#')) continue;
+                const idx = line.indexOf('=');
+                if (idx === -1) continue;
+                env[line.slice(0, idx)] = line.slice(idx + 1);
+              }
+              return env;
+            }
+
+            const base = readEnv('/tmp/base_metrics.env');
+            const pr = readEnv('/tmp/pr_metrics.env');
+            const guardPassed = '${{ steps.perf_guard.outcome }}' === 'success';
 
             function delta(base, pr) {
               const d = pr - base;
@@ -205,22 +217,37 @@ jobs:
               return n.toLocaleString('en-US');
             }
 
-            const body = `## ⚡ CU Benchmark (Vault)
+            function metric(key, source) {
+              return parseInt(source[key] || '0', 10);
+            }
+
+            const body = `## ⚡ Tracked Benchmark Guard
+
+            Guard: ${guardPassed ? 'PASS' : 'FAIL'}
+
+            ### Vault
 
             | Instruction | Base | PR | Delta |
             |-------------|------|-----|-------|
-            | Deposit | ${fmtNum(deposit_base)} | ${fmtNum(deposit_pr)} | ${delta(deposit_base, deposit_pr)} |
-            | Withdraw | ${fmtNum(withdraw_base)} | ${fmtNum(withdraw_pr)} | ${delta(withdraw_base, withdraw_pr)} |
+            | Deposit | ${fmtNum(metric('VAULT_DEPOSIT_CU', base))} | ${fmtNum(metric('VAULT_DEPOSIT_CU', pr))} | ${delta(metric('VAULT_DEPOSIT_CU', base), metric('VAULT_DEPOSIT_CU', pr))} |
+            | Withdraw | ${fmtNum(metric('VAULT_WITHDRAW_CU', base))} | ${fmtNum(metric('VAULT_WITHDRAW_CU', pr))} | ${delta(metric('VAULT_WITHDRAW_CU', base), metric('VAULT_WITHDRAW_CU', pr))} |
+            | Binary size | ${fmtNum(metric('VAULT_SIZE', base))} | ${fmtNum(metric('VAULT_SIZE', pr))} | ${delta(metric('VAULT_SIZE', base), metric('VAULT_SIZE', pr))} bytes |
 
-            **Binary size**: ${fmtNum(size_pr)} bytes (${delta(size_base, size_pr)} bytes)`.replace(/^            /gm, '');
+            ### Escrow
 
-            // Find and replace existing CU comment
+            | Instruction | Base | PR | Delta |
+            |-------------|------|-----|-------|
+            | Make | ${fmtNum(metric('ESCROW_MAKE_CU', base))} | ${fmtNum(metric('ESCROW_MAKE_CU', pr))} | ${delta(metric('ESCROW_MAKE_CU', base), metric('ESCROW_MAKE_CU', pr))} |
+            | Take | ${fmtNum(metric('ESCROW_TAKE_CU', base))} | ${fmtNum(metric('ESCROW_TAKE_CU', pr))} | ${delta(metric('ESCROW_TAKE_CU', base), metric('ESCROW_TAKE_CU', pr))} |
+            | Refund | ${fmtNum(metric('ESCROW_REFUND_CU', base))} | ${fmtNum(metric('ESCROW_REFUND_CU', pr))} | ${delta(metric('ESCROW_REFUND_CU', base), metric('ESCROW_REFUND_CU', pr))} |
+            | Binary size | ${fmtNum(metric('ESCROW_SIZE', base))} | ${fmtNum(metric('ESCROW_SIZE', pr))} | ${delta(metric('ESCROW_SIZE', base), metric('ESCROW_SIZE', pr))} bytes`.replace(/^            /gm, '');
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-            const existing = comments.find(c => c.body.includes('CU Benchmark (Vault)'));
+            const existing = comments.find(c => c.body.includes('Tracked Benchmark Guard'));
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -263,7 +290,7 @@ jobs:
             core.setOutput('skip_bench', skipBench ? 'true' : 'false');
 
   cu_benchmark_push:
-    name: CU Benchmark (Push)
+    name: CU Benchmark Guard (Push)
     needs: [check_if_pr_commit]
     if: github.event_name == 'push' && needs.check_if_pr_commit.outputs.skip_bench != 'true'
     runs-on: ubuntu-latest
@@ -295,74 +322,15 @@ jobs:
             ${{ runner.os }}-cargo-bench-
       - uses: dtolnay/rust-toolchain@stable
 
-      # --- Push baseline CU (pre-push branch HEAD) ---
-      - name: Build & bench push base
+      - name: Capture baseline metrics
         run: |
-          # Use pre-push HEAD as baseline for push event comparisons.
-          BASE_SHA="${{ github.event.before }}"
+          cp scripts/perf-baselines.env /tmp/push_base_metrics.env
 
-          if [ -z "$BASE_SHA" ] \
-            || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
-            || ! git rev-parse --verify -q "$BASE_SHA^{commit}" >/dev/null; then
-            echo "PUSH_BASE_AVAILABLE=false" >> $GITHUB_ENV
-            echo "PUSH_BASE_SHA=N/A" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          echo "PUSH_BASE_SHA=$BASE_SHA" >> $GITHUB_ENV
-          git checkout -f "$BASE_SHA"
-          cargo build-sbf --manifest-path examples/vault/Cargo.toml
-          cargo test -p quasar-vault -- --nocapture 2>&1 | tee /tmp/push_base_output.txt
-          BASE_BIN=$(find target -name "quasar_vault.so" -path "*/deploy/*" | head -1)
-          wc -c < "$BASE_BIN" | tr -d ' ' > /tmp/push_base_size.txt
-          echo "PUSH_BASE_AVAILABLE=true" >> $GITHUB_ENV
-
-      # --- Push head CU (current commit) ---
-      - name: Build & bench push head
+      - name: Capture push head metrics
         run: |
           git checkout -f ${{ github.sha }}
-          cargo build-sbf --manifest-path examples/vault/Cargo.toml
-          cargo test -p quasar-vault -- --nocapture 2>&1 | tee /tmp/push_head_output.txt
-          HEAD_BIN=$(find target -name "quasar_vault.so" -path "*/deploy/*" | head -1)
-          wc -c < "$HEAD_BIN" | tr -d ' ' > /tmp/push_head_size.txt
+          bash scripts/bench-tracked-programs.sh capture /tmp/push_head_metrics.env
 
-      # --- Output push report to CLI ---
-      - name: Output push benchmark report
+      - name: Fail on CU regression
         run: |
-          delta() {
-            local base="$1"
-            local head="$2"
-            local d=$((head - base))
-            if [ "$d" -eq 0 ]; then
-              echo "0"
-            elif [ "$d" -gt 0 ]; then
-              echo "+$d"
-            else
-              echo "$d"
-            fi
-          }
-
-          echo "CU Benchmark (Vault)"
-          echo "Base commit: ${PUSH_BASE_SHA:-N/A}"
-          echo "Head commit: ${{ github.sha }}"
-
-          DEPOSIT_HEAD="$(grep 'DEPOSIT CU:' /tmp/push_head_output.txt | head -1 | grep -oE '[0-9]+' || true)"
-          WITHDRAW_HEAD="$(grep 'WITHDRAW CU:' /tmp/push_head_output.txt | head -1 | grep -oE '[0-9]+' || true)"
-          SIZE_HEAD="$(cat /tmp/push_head_size.txt 2>/dev/null || true)"
-
-          if [ "$PUSH_BASE_AVAILABLE" != "true" ]; then
-            echo "Baseline unavailable; showing head-only results"
-            echo "Deposit CU: ${DEPOSIT_HEAD:-N/A}"
-            echo "Withdraw CU: ${WITHDRAW_HEAD:-N/A}"
-            echo "Binary size: ${SIZE_HEAD:-N/A} bytes"
-            exit 0
-          fi
-
-          DEPOSIT_BASE="$(grep 'DEPOSIT CU:' /tmp/push_base_output.txt | head -1 | grep -oE '[0-9]+' || true)"
-          WITHDRAW_BASE="$(grep 'WITHDRAW CU:' /tmp/push_base_output.txt | head -1 | grep -oE '[0-9]+' || true)"
-          SIZE_BASE="$(cat /tmp/push_base_size.txt 2>/dev/null || true)"
-
-          echo "Instruction | Base | Head | Delta"
-          echo "Deposit     | ${DEPOSIT_BASE:-N/A} | ${DEPOSIT_HEAD:-N/A} | $(delta "${DEPOSIT_BASE:-0}" "${DEPOSIT_HEAD:-0}")"
-          echo "Withdraw    | ${WITHDRAW_BASE:-N/A} | ${WITHDRAW_HEAD:-N/A} | $(delta "${WITHDRAW_BASE:-0}" "${WITHDRAW_HEAD:-0}")"
-          echo "Binary size | ${SIZE_BASE:-N/A} | ${SIZE_HEAD:-N/A} | $(delta "${SIZE_BASE:-0}" "${SIZE_HEAD:-0}") bytes"
+          bash scripts/bench-tracked-programs.sh compare /tmp/push_base_metrics.env /tmp/push_head_metrics.env
