@@ -37,6 +37,8 @@ pub struct RawPda {
 pub enum RawSeed {
     ByteString(Vec<u8>),
     AccountRef(String),
+    /// Instruction argument or field access expression used as a seed.
+    ArgRef(String),
 }
 
 /// Extract all `#[derive(Accounts)]` structs from a parsed file.
@@ -387,14 +389,22 @@ fn parse_single_seed(s: &str, sibling_names: &[String]) -> Option<RawSeed> {
         return Some(RawSeed::ByteString(inner.as_bytes().to_vec()));
     }
 
-    // Simple identifier that matches a sibling field name
+    // Simple identifier that matches a sibling field name → account ref
     if s.chars().all(|c| c.is_alphanumeric() || c == '_') && sibling_names.contains(&s.to_string())
     {
         return Some(RawSeed::AccountRef(s.to_string()));
     }
 
-    // Byte array: &[u8] or similar
-    // For now, try to interpret as a const byte literal
+    // Simple identifier (instruction arg) or dotted access (field.subfield) → arg ref
+    let clean = s.replace(' ', "");
+    if !clean.is_empty()
+        && clean
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+    {
+        return Some(RawSeed::ArgRef(clean));
+    }
+
     None
 }
 
@@ -437,6 +447,9 @@ fn to_idl_account_item(
             },
             RawSeed::AccountRef(name) => IdlSeed::Account {
                 path: helpers::to_camel_case(name),
+            },
+            RawSeed::ArgRef(path) => IdlSeed::Arg {
+                path: helpers::to_camel_case(path),
             },
         }));
 
