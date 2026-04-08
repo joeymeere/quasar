@@ -71,4 +71,12 @@ mod quasar_test_pda {
     ) -> Result<(), ProgramError> {
         ctx.accounts.handler(amount, &ctx.bumps)
     }
+
+    #[instruction(discriminator = 11)]
+    pub fn init_ix_data_seed(
+        ctx: Ctx<InitIxDataSeed>,
+        index: u64,
+    ) -> Result<(), ProgramError> {
+        ctx.accounts.handler(index, &ctx.bumps)
+    }
 }

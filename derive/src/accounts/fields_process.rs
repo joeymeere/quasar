@@ -1092,7 +1092,7 @@ pub(crate) fn process_fields(
             );
 
             // Dynamic seed elements — capture values for CPI
-            for (i, arg) in typed.args.iter().enumerate() {
+            for arg in &typed.args {
                 if let Expr::Path(ep) = arg {
                     if ep.qself.is_none() && ep.path.segments.len() == 1 {
                         let ident = &ep.path.segments[0].ident;
@@ -1114,16 +1114,67 @@ pub(crate) fn process_fields(
                         }
                     }
                 }
-                // For instruction args and field accesses, re-emit the expression.
-                // TODO: For CPI reconstruction of non-address seeds (instruction args,
-                // field accesses), the seed method on Bumps may not have access to these
-                // values. This works for PDA verification but needs a capture strategy
-                // for CPI signing in a follow-up.
-                let seed_expr =
-                    typed_seed_slice_expr(arg, field_name_strings, instruction_args);
-                let _capture_idx = i; // suppress unused warning
-                seed_elements
-                    .push(quote! { quasar_lang::cpi::Seed::from(#seed_expr) });
+                // Check if this is an instruction arg we can capture in Bumps.
+                let mut captured = false;
+                if let Expr::Path(ep) = arg {
+                    if ep.qself.is_none() && ep.path.segments.len() == 1 {
+                        let ident = &ep.path.segments[0].ident;
+                        if let Some(args) = instruction_args {
+                            if let Some(ix_arg) = args.iter().find(|a| a.name == *ident) {
+                                // Capture instruction arg as byte array in Bumps struct
+                                let ix_bytes_field =
+                                    format_ident!("__seed_{}_{}", field_name, ident);
+                                let capture_var =
+                                    format_ident!("__seed_ix_{}_{}", field_name, ident);
+                                let ty = &ix_arg.ty;
+                                let type_str = quote!(#ty).to_string().replace(' ', "");
+                                match type_str.as_str() {
+                                    "u8" => {
+                                        seed_addr_captures
+                                            .push(quote! { let #capture_var: [u8; 1] = [#ident]; });
+                                        bump_struct_fields
+                                            .push(quote! { #ix_bytes_field: [u8; 1] });
+                                    }
+                                    "bool" => {
+                                        seed_addr_captures
+                                            .push(quote! { let #capture_var: [u8; 1] = [#ident as u8]; });
+                                        bump_struct_fields
+                                            .push(quote! { #ix_bytes_field: [u8; 1] });
+                                    }
+                                    "Address" | "Pubkey" => {
+                                        seed_addr_captures
+                                            .push(quote! { let #capture_var = #ident; });
+                                        bump_struct_fields
+                                            .push(quote! { #ix_bytes_field: Address });
+                                    }
+                                    _ => {
+                                        // Numeric types — store as le bytes array
+                                        seed_addr_captures
+                                            .push(quote! { let #capture_var = #ident.to_le_bytes(); });
+                                        bump_struct_fields
+                                            .push(quote! { #ix_bytes_field: [u8; core::mem::size_of::<#ty>()] });
+                                    }
+                                }
+                                bump_struct_inits
+                                    .push(quote! { #ix_bytes_field: #capture_var });
+                                seed_elements.push(
+                                    quote! { quasar_lang::cpi::Seed::from(&self.#ix_bytes_field as &[u8]) },
+                                );
+                                captured = true;
+                            }
+                        }
+                    }
+                }
+                if !captured {
+                    // For field accesses and other expressions, re-emit as-is.
+                    // The seed method may not have access; this works for PDA
+                    // verification but CPI signing needs the caller to supply
+                    // signer seeds manually.
+                    let seed_expr =
+                        typed_seed_slice_expr(arg, field_name_strings, instruction_args);
+                    seed_elements
+                        .push(quote! { quasar_lang::cpi::Seed::from(#seed_expr) });
+                }
             }
 
             // Bump seed element
