@@ -1,7 +1,6 @@
 use {crate::state::NamespaceConfig, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
-#[instruction(namespace: u32)]
 pub struct InitNsConfig<'info> {
     pub payer: &'info mut Signer,
     #[account(init, payer = payer, seeds = NamespaceConfig::seeds(), bump)]
