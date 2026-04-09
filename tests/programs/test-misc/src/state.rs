@@ -45,7 +45,7 @@ impl Id for TestMiscProgram {
     const ID: Address = crate::ID;
 }
 
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"simple", authority: Address)]
 pub struct SimpleAccount {
     pub authority: Address,
@@ -91,7 +91,7 @@ pub struct TailBytesAccount<'a> {
 
 /// Same shape as SimpleAccount but with a different seed prefix — for
 /// space-override test.
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"spacetest", authority: Address)]
 pub struct SpaceTestAccount {
     pub authority: Address,
@@ -101,7 +101,7 @@ pub struct SpaceTestAccount {
 
 /// Same shape as SimpleAccount but with a different seed prefix — for
 /// explicit-payer test.
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"explicit", authority: Address)]
 pub struct ExplicitPayerAccount {
     pub authority: Address,
@@ -110,7 +110,7 @@ pub struct ExplicitPayerAccount {
 }
 
 /// Account with no discriminator — size-only validation.
-#[account(unsafe_no_disc)]
+#[account(unsafe_no_disc, set_inner)]
 #[seeds(b"nodisc", authority: Address)]
 pub struct NoDiscAccount {
     pub authority: Address,

@@ -188,40 +188,63 @@ impl DynFieldKind<'_> {
 ///
 /// Either `discriminator = <bytes>` (standard) or `unsafe_no_disc` (no
 /// discriminator — size-only validation, like SPL Token accounts).
-pub(crate) enum AccountAttr {
-    Discriminator(Vec<LitInt>),
-    UnsafeNoDisc,
+pub(crate) struct AccountAttr {
+    pub disc_bytes: Vec<LitInt>,
+    pub unsafe_no_disc: bool,
+    pub set_inner: bool,
 }
 
 impl Parse for AccountAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident: Ident = input.parse()?;
-        if ident == "unsafe_no_disc" {
-            return Ok(Self::UnsafeNoDisc);
-        }
-        if ident == "discriminator" {
-            let _: Token![=] = input.parse()?;
-            if input.peek(syn::token::Bracket) {
-                let content;
-                syn::bracketed!(content in input);
-                let lits = content.parse_terminated(LitInt::parse, Token![,])?;
-                let discriminator: Vec<LitInt> = lits.into_iter().collect();
-                if discriminator.is_empty() {
-                    return Err(syn::Error::new(
-                        input.span(),
-                        "discriminator must have at least one byte",
-                    ));
+        let mut disc_bytes = Vec::new();
+        let mut unsafe_no_disc = false;
+        let mut set_inner = false;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            if ident == "unsafe_no_disc" {
+                unsafe_no_disc = true;
+            } else if ident == "set_inner" {
+                set_inner = true;
+            } else if ident == "discriminator" {
+                let _: Token![=] = input.parse()?;
+                if input.peek(syn::token::Bracket) {
+                    let content;
+                    syn::bracketed!(content in input);
+                    let lits = content.parse_terminated(LitInt::parse, Token![,])?;
+                    disc_bytes = lits.into_iter().collect();
+                    if disc_bytes.is_empty() {
+                        return Err(syn::Error::new(
+                            input.span(),
+                            "discriminator must have at least one byte",
+                        ));
+                    }
+                } else {
+                    let lit: LitInt = input.parse()?;
+                    disc_bytes = vec![lit];
                 }
-                return Ok(Self::Discriminator(discriminator));
             } else {
-                let lit: LitInt = input.parse()?;
-                return Ok(Self::Discriminator(vec![lit]));
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "expected `discriminator`, `unsafe_no_disc`, or `set_inner`",
+                ));
             }
+            // consume optional trailing comma
+            let _ = input.parse::<Option<Token![,]>>();
         }
-        Err(syn::Error::new(
-            ident.span(),
-            "expected `discriminator` or `unsafe_no_disc`",
-        ))
+
+        if disc_bytes.is_empty() && !unsafe_no_disc {
+            return Err(syn::Error::new(
+                input.span(),
+                "expected `discriminator` or `unsafe_no_disc`",
+            ));
+        }
+
+        Ok(Self {
+            disc_bytes,
+            unsafe_no_disc,
+            set_inner,
+        })
     }
 }
 

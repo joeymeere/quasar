@@ -35,14 +35,15 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let name = &input.ident;
 
-    let (disc_bytes, unsafe_no_disc) = match args {
-        AccountAttr::UnsafeNoDisc => (vec![], true),
-        AccountAttr::Discriminator(d) => {
-            if let Err(e) = validate_discriminator_not_zero(&d) {
-                return e.to_compile_error().into();
-            }
-            (d, false)
+    let gen_set_inner = args.set_inner;
+    let unsafe_no_disc = args.unsafe_no_disc;
+    let disc_bytes = if !args.disc_bytes.is_empty() {
+        if let Err(e) = validate_discriminator_not_zero(&args.disc_bytes) {
+            return e.to_compile_error().into();
         }
+        args.disc_bytes
+    } else {
+        vec![]
     };
 
     let disc_len = disc_bytes.len();
@@ -110,6 +111,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
             &disc_indices,
             fields_data,
             &input,
+            gen_set_inner,
         );
         if let Some(seeds_tokens) = &seeds_impl {
             output.extend(TokenStream::from(seeds_tokens.clone()));
@@ -204,6 +206,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
         fields_data,
         &field_kinds,
         &input,
+        gen_set_inner,
     );
     if let Some(seeds_tokens) = &seeds_impl {
         output.extend(TokenStream::from(seeds_tokens.clone()));
