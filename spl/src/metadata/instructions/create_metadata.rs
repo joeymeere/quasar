@@ -1,8 +1,4 @@
-use quasar_lang::{
-    borsh::BorshCpiEncode,
-    cpi::{BufCpiCall, InstructionAccount},
-    prelude::*,
-};
+use quasar_lang::{borsh::BorshCpiEncode, cpi::DynCpiCall, prelude::*};
 
 const CREATE_METADATA_ACCOUNTS_V3: u8 = 33;
 
@@ -29,7 +25,7 @@ pub fn create_metadata_accounts_v3<'a>(
     seller_fee_basis_points: u16,
     is_mutable: bool,
     update_authority_is_signer: bool,
-) -> Result<BufCpiCall<'a, 7, 512>, ProgramError> {
+) -> Result<DynCpiCall<'a, 7, 512>, ProgramError> {
     let name_len = name.encoded_len() - 4;
     let symbol_len = symbol.encoded_len() - 4;
     let uri_len = uri.encoded_len() - 4;
@@ -40,10 +36,25 @@ pub fn create_metadata_accounts_v3<'a>(
         return Err(metadata_field_too_long());
     }
 
+    let mut cpi = DynCpiCall::<7, 512>::new(program.address());
+
+    // Push accounts.
+    cpi.push_account(metadata, false, true)?;
+    cpi.push_account(mint, false, false)?;
+    cpi.push_account(mint_authority, true, false)?;
+    cpi.push_account(payer, true, true)?;
+    cpi.push_account(
+        update_authority,
+        update_authority_is_signer,
+        false,
+    )?;
+    cpi.push_account(system_program, false, false)?;
+    cpi.push_account(rent, false, false)?;
+
     // Borsh-serialize: discriminator + DataV2 + is_mutable + collection_details
     // DataV2 = name(String) + symbol(String) + uri(String) + seller_fee(u16) +
     // creators(Option<Vec>) + collection(Option) + uses(Option)
-    let mut data = [0u8; 512];
+    let data = cpi.data_mut();
     let mut offset = 0;
 
     unsafe {
@@ -87,31 +98,6 @@ pub fn create_metadata_accounts_v3<'a>(
         offset += 1;
     }
 
-    BufCpiCall::new(
-        program.address(),
-        [
-            InstructionAccount::writable(metadata.address()),
-            InstructionAccount::readonly(mint.address()),
-            InstructionAccount::readonly_signer(mint_authority.address()),
-            InstructionAccount::writable_signer(payer.address()),
-            if update_authority_is_signer {
-                InstructionAccount::readonly_signer(update_authority.address())
-            } else {
-                InstructionAccount::readonly(update_authority.address())
-            },
-            InstructionAccount::readonly(system_program.address()),
-            InstructionAccount::readonly(rent.address()),
-        ],
-        [
-            metadata,
-            mint,
-            mint_authority,
-            payer,
-            update_authority,
-            system_program,
-            rent,
-        ],
-        data,
-        offset,
-    )
+    cpi.set_data_len(offset)?;
+    Ok(cpi)
 }

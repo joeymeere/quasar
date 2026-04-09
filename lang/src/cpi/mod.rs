@@ -1,15 +1,15 @@
-//! Cross-program invocation (CPI) builder with const-generic stack allocation.
+//! Cross-program invocation (CPI) builders with const-generic stack allocation.
 //!
 //! `CpiCall` is the primary type — a const-generic struct where account count
 //! and data size are known at compile time, keeping everything on the stack.
-//! `BufCpiCall` is the variable-length variant for Borsh-serialized
-//! instructions.
+//! `DynCpiCall` is the variable-length variant where both account count and
+//! data size are runtime-tracked within compile-time capacity bounds.
 //!
 //! Account types (`CpiAccount`, `InstructionAccount`, `Seed`, `Signer`) come
 //! from `solana-instruction-view`. Invocation goes through the upstream
 //! `invoke_signed_unchecked` with no intermediate borrow checking.
 
-pub mod buf;
+pub mod dyn_cpi;
 pub mod system;
 
 use {
@@ -20,7 +20,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
 };
 pub use {
-    buf::BufCpiCall,
+    dyn_cpi::DynCpiCall,
     solana_instruction_view::{
         cpi::{CpiAccount, Seed, Signer, MAX_RETURN_DATA},
         InstructionAccount, InstructionView,

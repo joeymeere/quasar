@@ -1,6 +1,6 @@
 use quasar_lang::{
     borsh::CpiEncode,
-    cpi::{BufCpiCall, InstructionAccount},
+    cpi::DynCpiCall,
     prelude::*,
 };
 
@@ -25,7 +25,7 @@ pub fn update_metadata_accounts_v2<'a>(
     seller_fee_basis_points: Option<u16>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
-) -> Result<BufCpiCall<'a, 2, 512>, ProgramError> {
+) -> Result<DynCpiCall<'a, 2, 512>, ProgramError> {
     if let Some(n) = name {
         if n.len() > super::MAX_NAME_LEN {
             return Err(metadata_field_too_long());
@@ -42,7 +42,13 @@ pub fn update_metadata_accounts_v2<'a>(
         }
     }
 
-    let mut data = [0u8; 512];
+    let mut cpi = DynCpiCall::<2, 512>::new(program.address());
+
+    // Push accounts.
+    cpi.push_account(metadata, false, true)?;
+    cpi.push_account(update_authority, true, false)?;
+
+    let data = cpi.data_mut();
     let mut offset = 0;
 
     unsafe {
@@ -123,14 +129,6 @@ pub fn update_metadata_accounts_v2<'a>(
         }
     }
 
-    BufCpiCall::new(
-        program.address(),
-        [
-            InstructionAccount::writable(metadata.address()),
-            InstructionAccount::readonly_signer(update_authority.address()),
-        ],
-        [metadata, update_authority],
-        data,
-        offset,
-    )
+    cpi.set_data_len(offset)?;
+    Ok(cpi)
 }

@@ -18,7 +18,7 @@ mod verify_collection;
 
 use quasar_lang::{
     borsh::BorshCpiEncode,
-    cpi::{BufCpiCall, CpiCall},
+    cpi::{CpiCall, DynCpiCall},
     prelude::*,
 };
 
@@ -32,7 +32,7 @@ const MAX_URI_LEN: usize = 200;
 /// Implemented by [`super::MetadataProgram`].
 pub trait MetadataCpi: AsAccountView {
     // -----------------------------------------------------------------------
-    // Variable-length instructions (BufCpiCall)
+    // Variable-length instructions (DynCpiCall)
     // -----------------------------------------------------------------------
 
     /// Create a metadata account for an SPL Token mint.
@@ -56,7 +56,7 @@ pub trait MetadataCpi: AsAccountView {
         seller_fee_basis_points: u16,
         is_mutable: bool,
         update_authority_is_signer: bool,
-    ) -> Result<BufCpiCall<'a, 7, 512>, ProgramError> {
+    ) -> Result<DynCpiCall<'a, 7, 512>, ProgramError> {
         create_metadata::create_metadata_accounts_v3(
             self.to_account_view(),
             metadata.to_account_view(),
@@ -91,7 +91,7 @@ pub trait MetadataCpi: AsAccountView {
         seller_fee_basis_points: Option<u16>,
         primary_sale_happened: Option<bool>,
         is_mutable: Option<bool>,
-    ) -> Result<BufCpiCall<'a, 2, 512>, ProgramError> {
+    ) -> Result<DynCpiCall<'a, 2, 512>, ProgramError> {
         update_metadata::update_metadata_accounts_v2(
             self.to_account_view(),
             metadata.to_account_view(),
