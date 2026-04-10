@@ -1,18 +1,18 @@
 use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
-    pub user: &'info mut Signer,
+pub struct Deposit {
+    pub user: Signer,
     #[account(mut, seeds = [b"vault", user], bump)]
-    pub vault: &'info mut UncheckedAccount,
-    pub system_program: &'info Program<System>,
+    pub vault: UncheckedAccount,
+    pub system_program: Program<System>,
 }
 
-impl<'info> Deposit<'info> {
+impl Deposit {
     #[inline(always)]
     pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
         self.system_program
-            .transfer(self.user, self.vault, amount)
+            .transfer(&self.user, &self.vault, amount)
             .invoke()
     }
 }

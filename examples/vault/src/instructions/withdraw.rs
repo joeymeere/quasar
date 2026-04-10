@@ -1,13 +1,13 @@
 use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
-    pub user: &'info mut Signer,
+pub struct Withdraw {
+    pub user: Signer,
     #[account(mut, seeds = [b"vault", user], bump)]
-    pub vault: &'info mut UncheckedAccount,
+    pub vault: UncheckedAccount,
 }
 
-impl<'info> Withdraw<'info> {
+impl Withdraw {
     #[inline(always)]
     pub fn withdraw(&self, amount: u64) -> Result<(), ProgramError> {
         let vault = self.vault.to_account_view();
