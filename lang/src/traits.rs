@@ -312,3 +312,19 @@ pub trait Event {
     fn write_data(&self, buf: &mut [u8]);
     fn emit(&self, f: impl FnOnce(&[u8]) -> Result<(), ProgramError>) -> Result<(), ProgramError>;
 }
+
+/// Verify that the actual account count matches the expected count.
+///
+/// Used by `ParseAccounts` / `ParseAccountsUnchecked` impls to reject
+/// instruction calls with wrong account counts.
+#[inline(always)]
+pub fn check_account_count(actual: usize, expected: usize) -> Result<(), ProgramError> {
+    if crate::utils::hint::unlikely(actual != expected) {
+        return Err(if actual < expected {
+            ProgramError::NotEnoughAccountKeys
+        } else {
+            ProgramError::InvalidArgument
+        });
+    }
+    Ok(())
+}

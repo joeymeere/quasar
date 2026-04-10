@@ -111,15 +111,16 @@ fn gen_bump_check(
                         {
                             #(#seed_len_checks)*
                             if let Some(__offset) = <#inner_ty as Discriminator>::BUMP_OFFSET {
-                                if quasar_lang::utils::hint::unlikely(__offset >= #view_access.data_len()) {
+                                let __bump_val: u8 = quasar_lang::pda::read_bump_from_account(
+                                    #view_access, __offset,
+                                ).map_err(|__e| {
                                     #[cfg(feature = "debug")]
                                     quasar_lang::prelude::log(concat!(
                                         "BUMP_OFFSET out of bounds for account '",
                                         stringify!(#field_name), "'"
                                     ));
-                                    return Err(ProgramError::AccountDataTooSmall);
-                                }
-                                let __bump_val: u8 = unsafe { *#view_access.data_ptr().add(__offset) };
+                                    __e
+                                })?;
                                 let __bump_ref: &[u8] = &[__bump_val];
                                 let __pda_seeds = [#(#seed_idents,)* __bump_ref];
                                 quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access)
@@ -599,14 +600,20 @@ pub(crate) fn process_fields(
                 None => quote! { QuasarError::HasOneMismatch.into() },
             };
             let target_str = target.to_string();
-            this_field_checks.push(debug_guard(
-                quote! { !quasar_lang::keys_eq(&#field_name.#target, #target.to_account_view().address()) },
-                quote! { ::alloc::format!(
-                    "has_one mismatch: '{}.{}' does not match account '{}'",
-                    #field_name_str, #target_str, #target_str,
-                ) },
-                quote! { #error },
-            ));
+            this_field_checks.push(quote! {
+                quasar_lang::validation::check_has_one(
+                    &#field_name.#target,
+                    #target.to_account_view().address(),
+                    #error,
+                ).map_err(|__e| {
+                    #[cfg(feature = "debug")]
+                    quasar_lang::prelude::log(&::alloc::format!(
+                        "has_one mismatch: '{}.{}' does not match account '{}'",
+                        #field_name_str, #target_str, #target_str,
+                    ));
+                    __e
+                })?;
+            });
         }
 
         for (expr, custom_error) in &attrs.constraints {
@@ -630,15 +637,21 @@ pub(crate) fn process_fields(
                 Some(err) => quote! { #err.into() },
                 None => quote! { QuasarError::AddressMismatch.into() },
             };
-            this_field_checks.push(debug_guard(
-                quote! { !quasar_lang::keys_eq(#field_name.to_account_view().address(), &#addr_expr) },
-                quote! { ::alloc::format!(
-                    "Address mismatch on '{}': got {}",
-                    #field_name_str,
+            this_field_checks.push(quote! {
+                quasar_lang::validation::check_address_match(
                     #field_name.to_account_view().address(),
-                ) },
-                quote! { #error },
-            ));
+                    &#addr_expr,
+                    #error,
+                ).map_err(|__e| {
+                    #[cfg(feature = "debug")]
+                    quasar_lang::prelude::log(&::alloc::format!(
+                        "Address mismatch on '{}': got {}",
+                        #field_name_str,
+                        #field_name.to_account_view().address(),
+                    ));
+                    __e
+                })?;
+            });
         }
 
         if let Some(dest) = &attrs.close {

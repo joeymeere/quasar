@@ -665,14 +665,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     // --- Final output ---
 
     let exact_len_guard = quote! {
-        let __account_count = accounts.len();
-        if quasar_lang::utils::hint::unlikely(__account_count != Self::COUNT) {
-            return Err(if __account_count < Self::COUNT {
-                ProgramError::NotEnoughAccountKeys
-            } else {
-                ProgramError::InvalidArgument
-            });
-        }
+        quasar_lang::traits::check_account_count(accounts.len(), Self::COUNT)?;
     };
 
     let parse_accounts_impl = if has_instruction_args {

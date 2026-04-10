@@ -243,32 +243,11 @@ pub(crate) fn program(_attr: TokenStream, item: TokenStream) -> TokenStream {
         items.push(syn::parse_quote! {
             #[inline(always)]
             fn __handle_event(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
-                // SAFETY: The SVM places the account count (u64) at offset 0.
-                if unsafe { *(ptr as *const u64) } == 0 {
-                    return Err(ProgramError::NotEnoughAccountKeys);
-                }
-                // SAFETY: Pointer arithmetic follows the SVM input buffer layout.
-                unsafe {
-                    let raw = ptr.add(core::mem::size_of::<u64>()) as *const quasar_lang::__internal::RuntimeAccount;
-
-                    if (*raw).is_signer == 0 {
-                        return Err(ProgramError::MissingRequiredSignature);
-                    }
-
-                    if !quasar_lang::keys_eq(
-                        &(*raw).address,
-                        &super::EventAuthority::ADDRESS,
-                    ) {
-                        return Err(ProgramError::InvalidSeeds);
-                    }
-                }
-
-                if instruction_data.len() <= 1 {
-                    return Err(ProgramError::InvalidInstructionData);
-                }
-
-                quasar_lang::log::log_data(&[&instruction_data[1..]]);
-                Ok(())
+                quasar_lang::event::handle_event(
+                    ptr,
+                    instruction_data,
+                    &super::EventAuthority::ADDRESS,
+                )
             }
         });
 

@@ -11,6 +11,43 @@ use {
     solana_program_error::ProgramError,
 };
 
+/// Validate and log an inbound event CPI.
+///
+/// Called by the generated `__handle_event` dispatch stub. Checks that the
+/// first account is a signer matching the program's event authority PDA,
+/// then logs the instruction data (minus the `0xFF` prefix).
+#[inline(always)]
+pub fn handle_event(
+    ptr: *mut u8,
+    instruction_data: &[u8],
+    event_authority: &solana_address::Address,
+) -> Result<(), ProgramError> {
+    // SAFETY: The SVM places the account count (u64) at offset 0.
+    if unsafe { *(ptr as *const u64) } == 0 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    // SAFETY: Pointer arithmetic follows the SVM input buffer layout.
+    unsafe {
+        let raw = ptr.add(core::mem::size_of::<u64>())
+            as *const crate::__internal::RuntimeAccount;
+
+        if (*raw).is_signer == 0 {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+
+        if !crate::keys_eq(&(*raw).address, event_authority) {
+            return Err(ProgramError::InvalidSeeds);
+        }
+    }
+
+    if instruction_data.len() <= 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    crate::log::log_data(&[&instruction_data[1..]]);
+    Ok(())
+}
+
 /// Emit an event via self-CPI to the program's own `__event_authority` PDA.
 ///
 /// The self-CPI proves the event was emitted by the program (the program ID

@@ -185,6 +185,23 @@ pub fn based_try_find_program_address(
     }
 }
 
+/// Read the PDA bump byte from account data at the given offset.
+///
+/// Used by the BUMP_OFFSET fast path to read the bump from the account's
+/// own data instead of re-deriving it.
+#[inline(always)]
+pub fn read_bump_from_account(
+    view: &solana_account_view::AccountView,
+    offset: usize,
+) -> Result<u8, ProgramError> {
+    if crate::utils::hint::unlikely(offset >= view.data_len()) {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+    // SAFETY: Bounds checked above. `data_ptr()` returns a valid pointer
+    // to `data_len()` bytes.
+    Ok(unsafe { *view.data_ptr().add(offset) })
+}
+
 /// Compile-time PDA derivation using `const_crypto`.
 pub const fn find_program_address_const(seeds: &[&[u8]], program_id: &Address) -> (Address, u8) {
     let (bytes, bump) = const_crypto::ed25519::derive_program_address(seeds, program_id.as_array());
