@@ -579,14 +579,12 @@ pub(crate) fn process_fields(
                 field_constructs
                     .push(quote! { #field_name: #base_type::from_account_view(#field_name)? });
             }
-        } else if let Type::Reference(type_ref) = effective_ty {
-            let base_type = strip_generics(&type_ref.elem);
-            let expr = if type_ref.mutability.is_some() {
-                quote! { unsafe { #base_type::from_account_view_unchecked_mut(#field_name) } }
-            } else {
-                quote! { unsafe { #base_type::from_account_view_unchecked(#field_name) } }
-            };
-            field_constructs.push(construct(expr));
+        } else if let Type::Reference(_) = effective_ty {
+            return Err(
+                syn::Error::new_spanned(field, "Reference types are not supported")
+                    .to_compile_error()
+                    .into(),
+            );
         } else {
             let base_type = strip_generics(effective_ty);
             field_constructs.push(construct(
