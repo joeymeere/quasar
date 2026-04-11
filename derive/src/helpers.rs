@@ -543,9 +543,17 @@ pub(crate) fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
 /// Converts `PascalCase` to `snake_case` (e.g., `MakeEscrow` → `make_escrow`).
 pub(crate) fn pascal_to_snake(s: &str) -> String {
     let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         if c.is_uppercase() && i > 0 {
-            result.push('_');
+            // Only insert underscore before an uppercase letter when the
+            // previous char is lowercase, OR the next char is lowercase
+            // (handles acronym runs like "HTTP" → "http" not "h_t_t_p").
+            let prev_lower = chars[i - 1].is_lowercase();
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev_lower || next_lower {
+                result.push('_');
+            }
         }
         result.push(c.to_lowercase().next().unwrap());
     }
@@ -603,7 +611,9 @@ fn parse_prefix_type(ty: &Type) -> Option<PrefixType> {
 pub(crate) fn classify_dynamic_string(ty: &Type) -> Option<(PrefixType, usize)> {
     if let Type::Path(type_path) = ty {
         if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "String" {
+            // Only match unqualified `String` (the Quasar import), not
+            // `std::string::String` or `my_crate::String`.
+            if seg.ident == "String" && type_path.path.segments.len() == 1 {
                 return match &seg.arguments {
                     PathArguments::None => Some((PrefixType::U32, 1024)),
                     PathArguments::AngleBracketed(args) => {
@@ -647,7 +657,7 @@ pub(crate) fn classify_dynamic_string(ty: &Type) -> Option<(PrefixType, usize)> 
 pub(crate) fn classify_dynamic_vec(ty: &Type) -> Option<(Type, PrefixType, usize)> {
     if let Type::Path(type_path) = ty {
         if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "Vec" {
+            if seg.ident == "Vec" && type_path.path.segments.len() == 1 {
                 if let PathArguments::AngleBracketed(args) = &seg.arguments {
                     let mut iter = args.args.iter();
                     let first = iter.next()?;

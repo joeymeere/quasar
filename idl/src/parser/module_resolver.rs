@@ -91,10 +91,15 @@ fn resolve_file(path: &Path, files: &mut Vec<ResolvedFile>) {
 fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if attr.path().is_ident("cfg") {
-            let tokens = attr.meta.require_list().ok().map(|l| l.tokens.to_string());
-            if let Some(t) = tokens {
-                if t.contains("test") {
-                    return true;
+            // Parse the cfg predicate properly instead of string matching.
+            // We check for exactly `cfg(test)` to avoid false positives on
+            // attributes like `cfg(feature = "testing")` or `cfg(test_utils)`.
+            if let Ok(list) = attr.meta.require_list() {
+                let inner: Result<syn::Ident, _> = syn::parse2(list.tokens.clone());
+                if let Ok(ident) = inner {
+                    if ident == "test" {
+                        return true;
+                    }
                 }
             }
         }

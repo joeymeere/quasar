@@ -27,6 +27,23 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let disc_len = disc_bytes.len();
 
+    // Reject multi-byte all-zero discriminators — zeroed instruction data could
+    // accidentally match. Single-byte discriminators are fine (the dispatch
+    // macro's length check rejects empty instruction data).
+    if disc_len > 1
+        && disc_bytes
+            .iter()
+            .all(|lit| matches!(lit.base10_parse::<u8>(), Ok(0)))
+    {
+        return syn::Error::new_spanned(
+            &disc_bytes[0],
+            "instruction discriminator must contain at least one non-zero byte; all-zero \
+             multi-byte discriminators are dangerous because zeroed instruction data would match",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let first_arg = match func.sig.inputs.first() {
         Some(FnArg::Typed(pt)) => pt.clone(),
         _ => {
@@ -255,107 +272,56 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                         dyn_idx += 1;
                         let pb = prefix.bytes();
                         let max_lit = *max;
-                        let read_len = prefix.gen_read_len();
-                        new_stmts.push(syn::parse_quote!(
-                            if __data.len() < __offset + #pb {
-                                return Err(ProgramError::InvalidInstructionData);
-                            }
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            let __dyn_len = #read_len;
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            __offset += #pb;
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            if __dyn_len > #max_lit {
-                                return Err(ProgramError::InvalidInstructionData);
-                            }
-                        ));
-                        new_stmts.push(syn::parse_quote!(if __data.len() < __offset + __dyn_len {
-                            return Err(ProgramError::InvalidInstructionData);
-                        }));
-                        new_stmts.push(syn::parse_quote!(
-                            let #name: &str = {
-                                let __bytes = &__data[__offset..__offset + __dyn_len];
-                                match core::str::from_utf8(__bytes) {
-                                    Ok(__s) => __s,
-                                    Err(_) => return Err(ProgramError::InvalidInstructionData),
-                                }
-                            };
-                        ));
                         if dyn_idx < dyn_count {
                             new_stmts.push(syn::parse_quote!(
-                                __offset += __dyn_len;
+                                let (#name, __new_offset) = quasar_lang::instruction_data::read_dynamic_str::<#pb>(
+                                    __data, __offset, #max_lit,
+                                )?;
+                            ));
+                            new_stmts.push(syn::parse_quote!(
+                                __offset = __new_offset;
+                            ));
+                        } else {
+                            new_stmts.push(syn::parse_quote!(
+                                let (#name, _) = quasar_lang::instruction_data::read_dynamic_str::<#pb>(
+                                    __data, __offset, #max_lit,
+                                )?;
                             ));
                         }
                     }
                     DynKind::Tail { element } => {
                         dyn_idx += 1;
-                        // Tail field: remaining data, no prefix
                         match element {
                             TailElement::Str => {
                                 new_stmts.push(syn::parse_quote!(
-                                    let #name: &str = {
-                                        let __bytes = &__data[__offset..];
-                                        match core::str::from_utf8(__bytes) {
-                                            Ok(__s) => __s,
-                                            Err(_) => return Err(ProgramError::InvalidInstructionData),
-                                        }
-                                    };
+                                    let #name: &str = quasar_lang::instruction_data::read_tail_str(__data, __offset)?;
                                 ));
                             }
                             TailElement::Bytes => {
                                 new_stmts.push(syn::parse_quote!(
-                                    let #name: &[u8] = &__data[__offset..];
+                                    let #name: &[u8] = quasar_lang::instruction_data::read_tail_bytes(__data, __offset);
                                 ));
                             }
                         }
-                        // Tail consumes all remaining data — no offset advance
-                        // needed
                     }
                     DynKind::Vec { elem, prefix, max } => {
                         dyn_idx += 1;
                         let pb = prefix.bytes();
                         let max_lit = *max;
-                        let read_len = prefix.gen_read_len();
-                        new_stmts.push(syn::parse_quote!(
-                            if __data.len() < __offset + #pb {
-                                return Err(ProgramError::InvalidInstructionData);
-                            }
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            let __dyn_count = #read_len;
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            __offset += #pb;
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            if __dyn_count > #max_lit {
-                                return Err(ProgramError::InvalidInstructionData);
-                            }
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            let __dyn_byte_len = __dyn_count
-                                .checked_mul(core::mem::size_of::<#elem>())
-                                .ok_or(ProgramError::InvalidInstructionData)?;
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            if __data.len() < __offset + __dyn_byte_len {
-                                return Err(ProgramError::InvalidInstructionData);
-                            }
-                        ));
-                        new_stmts.push(syn::parse_quote!(
-                            let #name: &[#elem] = unsafe {
-                                core::slice::from_raw_parts(
-                                    __data.as_ptr().add(__offset) as *const #elem,
-                                    __dyn_count,
-                                )
-                            };
-                        ));
                         if dyn_idx < dyn_count {
                             new_stmts.push(syn::parse_quote!(
-                                __offset += __dyn_byte_len;
+                                let (#name, __new_offset) = quasar_lang::instruction_data::read_dynamic_vec::<#elem, #pb>(
+                                    __data, __offset, #max_lit,
+                                )?;
+                            ));
+                            new_stmts.push(syn::parse_quote!(
+                                __offset = __new_offset;
+                            ));
+                        } else {
+                            new_stmts.push(syn::parse_quote!(
+                                let (#name, _) = quasar_lang::instruction_data::read_dynamic_vec::<#elem, #pb>(
+                                    __data, __offset, #max_lit,
+                                )?;
                             ));
                         }
                     }

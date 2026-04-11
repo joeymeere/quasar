@@ -206,8 +206,8 @@ impl TokenAccountState {
     }
 }
 
-const _ASSERT_TOKEN_ACCOUNT_LEN: () = assert!(TokenAccountState::LEN == 165);
-const _ASSERT_TOKEN_ACCOUNT_ALIGN: () = assert!(core::mem::align_of::<TokenAccountState>() == 1);
+const _: () = assert!(TokenAccountState::LEN == 165);
+const _: () = assert!(core::mem::align_of::<TokenAccountState>() == 1);
 
 // ---------------------------------------------------------------------------
 // MintAccountState
@@ -295,5 +295,5 @@ impl MintAccountState {
     }
 }
 
-const _ASSERT_MINT_LEN: () = assert!(MintAccountState::LEN == 82);
-const _ASSERT_MINT_ALIGN: () = assert!(core::mem::align_of::<MintAccountState>() == 1);
+const _: () = assert!(MintAccountState::LEN == 82);
+const _: () = assert!(core::mem::align_of::<MintAccountState>() == 1);

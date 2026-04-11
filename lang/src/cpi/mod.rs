@@ -171,10 +171,13 @@ fn get_cpi_return() -> Result<CpiReturn, ProgramError> {
     #[cfg(any(target_os = "solana", target_arch = "bpf"))]
     {
         let mut program_id = MaybeUninit::<Address>::uninit();
-        let mut data = [0u8; MAX_RETURN_DATA];
+        // SAFETY: sol_get_return_data writes `min(size, MAX_RETURN_DATA)` bytes
+        // into the buffer. All consumer paths (as_slice, decode) are bounded by
+        // `data_len`, so uninitialized trailing bytes are never read.
+        let mut data = MaybeUninit::<[u8; MAX_RETURN_DATA]>::uninit();
         let size = unsafe {
             solana_define_syscall::definitions::sol_get_return_data(
-                data.as_mut_ptr(),
+                data.as_mut_ptr() as *mut u8,
                 MAX_RETURN_DATA as u64,
                 program_id.as_mut_ptr() as *mut _ as *mut u8,
             )
@@ -184,9 +187,15 @@ fn get_cpi_return() -> Result<CpiReturn, ProgramError> {
             return Err(QuasarError::MissingReturnData.into());
         }
 
+        // SAFETY: sol_get_return_data initialised `min(size, MAX_RETURN_DATA)`
+        // bytes. The remaining bytes are uninitialised but never accessed —
+        // CpiReturn::as_slice returns &data[..data_len] and decode copies
+        // exactly size_of::<T::Zc>() bytes. We assume_init the full array
+        // because the struct carries it by value; the uninitialised tail is
+        // inert (u8 has no Drop).
         return Ok(CpiReturn::new(
             unsafe { program_id.assume_init() },
-            data,
+            unsafe { data.assume_init() },
             core::cmp::min(size, MAX_RETURN_DATA),
         ));
     }
@@ -323,36 +332,42 @@ impl<'a, const ACCTS: usize, const DATA: usize> CpiCall<'a, ACCTS, DATA> {
 
     /// Invoke the CPI without any PDA signers.
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke(&self) -> ProgramResult {
         self.invoke_inner(&[])
     }
 
     /// Invoke the CPI with a single PDA signer (seeds for one address).
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke_signed(&self, seeds: &[Seed]) -> ProgramResult {
         self.invoke_inner(&[Signer::from(seeds)])
     }
 
     /// Invoke the CPI with multiple PDA signers.
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke_with_signers(&self, signers: &[Signer]) -> ProgramResult {
         self.invoke_inner(signers)
     }
 
     /// Invoke the CPI and read back raw return data.
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke_with_return(&self) -> Result<CpiReturn, ProgramError> {
         self.invoke_with_return_inner(&[])
     }
 
     /// Invoke the CPI with one PDA signer and read back raw return data.
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke_signed_with_return(&self, seeds: &[Seed]) -> Result<CpiReturn, ProgramError> {
         self.invoke_with_return_inner(&[Signer::from(seeds)])
     }
 
     /// Invoke the CPI with multiple PDA signers and read back raw return data.
     #[inline(always)]
+    #[must_use = "CPI result must be handled with `?` or matched"]
     pub fn invoke_with_signers_with_return(
         &self,
         signers: &[Signer],
@@ -418,12 +433,12 @@ mod tests {
         solana_account_view::{RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED},
     };
 
-    struct AccountBuffer {
+    pub(super) struct AccountBuffer {
         inner: std::vec::Vec<u64>,
     }
 
     impl AccountBuffer {
-        fn new(data_len: usize) -> Self {
+        pub(in crate::cpi) fn new(data_len: usize) -> Self {
             let byte_len =
                 core::mem::size_of::<RuntimeAccount>() + data_len + MAX_PERMITTED_DATA_INCREASE;
             Self {
@@ -431,11 +446,11 @@ mod tests {
             }
         }
 
-        fn raw(&mut self) -> *mut RuntimeAccount {
+        pub(in crate::cpi) fn raw(&mut self) -> *mut RuntimeAccount {
             self.inner.as_mut_ptr() as *mut RuntimeAccount
         }
 
-        fn init(
+        pub(in crate::cpi) fn init(
             &mut self,
             address: [u8; 32],
             owner: [u8; 32],
@@ -458,7 +473,7 @@ mod tests {
             }
         }
 
-        unsafe fn view(&mut self) -> AccountView {
+        pub(in crate::cpi) unsafe fn view(&mut self) -> AccountView {
             AccountView::new_unchecked(self.raw())
         }
     }

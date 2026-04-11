@@ -1412,9 +1412,14 @@ fn snake_to_pascal(s: &str) -> String {
 /// Convert PascalCase to snake_case.
 fn pascal_to_snake(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         if c.is_uppercase() && i > 0 {
-            result.push('_');
+            let prev_lower = chars[i - 1].is_lowercase();
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev_lower || next_lower {
+                result.push('_');
+            }
         }
         result.push(c.to_ascii_lowercase());
     }

@@ -162,7 +162,6 @@ fn type_to_string(ty: &syn::Type) -> String {
             result.push(c);
         }
     }
-    let _ = result.trim_end().to_string();
     result.trim().to_string()
 }
 

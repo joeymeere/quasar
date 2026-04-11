@@ -15,6 +15,11 @@ use {solana_address::Address, solana_program_error::ProgramError};
 #[cfg(any(target_os = "solana", target_arch = "bpf"))]
 const PDA_MARKER: &[u8; 21] = b"ProgramDerivedAddress";
 
+/// Maximum number of slices in a PDA hash input: up to 17 seeds + bump +
+/// program_id + PDA_MARKER.
+#[cfg(any(target_os = "solana", target_arch = "bpf"))]
+const MAX_PDA_SLICES: usize = 19;
+
 /// Verify that `expected` matches `sha256(seeds || program_id ||
 /// "ProgramDerivedAddress")`.
 ///
@@ -37,7 +42,7 @@ pub fn verify_program_address(
 
         // Build the input array: [seeds..., program_id, PDA_MARKER].
         // Max 17 seeds + program_id + marker = 19 entries.
-        let mut slices = core::mem::MaybeUninit::<[&[u8]; 19]>::uninit();
+        let mut slices = core::mem::MaybeUninit::<[&[u8]; MAX_PDA_SLICES]>::uninit();
         let sptr = slices.as_mut_ptr() as *mut &[u8];
 
         let mut i = 0;
@@ -107,7 +112,7 @@ pub fn based_try_find_program_address(
 
         // Build the input array: [seeds..., bump, program_id, PDA_MARKER].
         // Max 16 seeds + bump + program_id + marker = 19 entries.
-        let mut slices = core::mem::MaybeUninit::<[&[u8]; 19]>::uninit();
+        let mut slices = core::mem::MaybeUninit::<[&[u8]; MAX_PDA_SLICES]>::uninit();
         let sptr = slices.as_mut_ptr() as *mut &[u8];
 
         let mut i = 0;
@@ -179,6 +184,23 @@ pub fn based_try_find_program_address(
         let _ = (seeds, program_id);
         Err(ProgramError::InvalidArgument)
     }
+}
+
+/// Read the PDA bump byte from account data at the given offset.
+///
+/// Used by the BUMP_OFFSET fast path to read the bump from the account's
+/// own data instead of re-deriving it.
+#[inline(always)]
+pub fn read_bump_from_account(
+    view: &solana_account_view::AccountView,
+    offset: usize,
+) -> Result<u8, ProgramError> {
+    if crate::utils::hint::unlikely(offset >= view.data_len()) {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
+    // SAFETY: Bounds checked above. `data_ptr()` returns a valid pointer
+    // to `data_len()` bytes.
+    Ok(unsafe { *view.data_ptr().add(offset) })
 }
 
 /// Compile-time PDA derivation using `const_crypto`.

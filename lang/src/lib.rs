@@ -107,6 +107,8 @@ pub mod event;
 /// Trait for fixed-size instruction argument types with alignment-1 ZC
 /// companions.
 pub mod instruction_arg;
+/// Instruction data deserialization for dynamic fields (strings, vecs, tails).
+pub mod instruction_data;
 /// Low-level `sol_log_data` syscall wrapper.
 pub mod log;
 /// Program Derived Address creation and lookup.
@@ -123,6 +125,8 @@ pub mod return_data;
 pub mod traits;
 /// Utility functions
 pub mod utils;
+/// Runtime validation helpers for account constraints.
+pub mod validation;
 
 /// 32-byte address comparison via four `read_unaligned` u64 words.
 ///

@@ -40,7 +40,10 @@ pub fn resize(view: &mut AccountView, new_len: usize) -> Result<(), ProgramError
     let raw = view.account_mut_ptr();
 
     // SAFETY: `raw` is a valid `RuntimeAccount` pointer from `AccountView`.
-    let current_len = unsafe { (*raw).data_len } as i32;
+    // `data_len` is always within i32 range on Solana (max 10 MiB) — try_from
+    // is defense-in-depth against future SVM changes.
+    let current_len =
+        i32::try_from(unsafe { (*raw).data_len }).map_err(|_| ProgramError::InvalidRealloc)?;
     let new_len_i32 = i32::try_from(new_len).map_err(|_| ProgramError::InvalidRealloc)?;
 
     if new_len_i32 == current_len {

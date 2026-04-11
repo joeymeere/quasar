@@ -25,8 +25,8 @@ pub struct Clock {
     pub unix_timestamp: PodI64,
 }
 
-const _ASSERT_STRUCT_LEN: () = assert!(size_of::<Clock>() == 40);
-const _ASSERT_STRUCT_ALIGN: () = assert!(align_of::<Clock>() == 1);
+const _: () = assert!(size_of::<Clock>() == 40);
+const _: () = assert!(align_of::<Clock>() == 1);
 
 impl Sysvar for Clock {
     impl_sysvar_get!(CLOCK_ID, 0);

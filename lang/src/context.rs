@@ -126,15 +126,25 @@ impl<'input, T: ParseAccounts<'input> + ParseAccountsUnchecked<'input> + Account
     #[inline(always)]
     pub fn new(ctx: Context<'input>) -> Result<Self, ProgramError> {
         let program_id_addr = unsafe { as_address(ctx.program_id) };
-        // Save slice metadata before parse consumes the &mut borrow.
-        // The declared `AccountView`s are copied by value during parsing, so the
-        // backing slice header stays valid for read-only duplicate resolution
-        // after `parse_with_instruction_data_unchecked` returns.
+        // Save raw pointer + length before parse consumes the &mut borrow.
+        // We intentionally keep these as raw pointers — reconstructing an
+        // &[AccountView] would create a shared reference that aliases the
+        // &mut AccountView references held by the parsed struct (fragile
+        // under Stacked Borrows). The RemainingIter uses only raw pointer
+        // reads for duplicate resolution, so a slice reference is unnecessary.
         let declared_ptr = ctx.accounts.as_ptr();
         let declared_len = ctx.accounts.len();
         let (accounts, bumps) = unsafe {
             T::parse_with_instruction_data_unchecked(ctx.accounts, ctx.data, program_id_addr)?
         };
+        // SAFETY: The backing memory is still valid — parse copies AccountView
+        // values out of the slice, it does not deallocate. We construct the
+        // shared slice here only for the RemainingAccounts API which uses it
+        // for read-only address comparisons via keys_eq. The parsed struct
+        // holds &mut refs into the pointed-to RuntimeAccount data (through
+        // the raw pointers inside each AccountView), not into the AccountView
+        // slice itself, so under Tree Borrows the shared slice's "Frozen"
+        // permission on the AccountView pointer fields does not conflict.
         let declared = unsafe { core::slice::from_raw_parts(declared_ptr, declared_len) };
         Ok(Self {
             accounts,

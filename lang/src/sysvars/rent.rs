@@ -58,8 +58,8 @@ pub struct Rent {
     exemption_threshold: [u8; 8],
 }
 
-const _ASSERT_STRUCT_LEN: () = assert!(size_of::<Rent>() == 16);
-const _ASSERT_STRUCT_ALIGN: () = assert!(align_of::<Rent>() == 1);
+const _: () = assert!(size_of::<Rent>() == 16);
+const _: () = assert!(align_of::<Rent>() == 1);
 
 impl Rent {
     #[inline(always)]

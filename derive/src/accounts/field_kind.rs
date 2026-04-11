@@ -165,18 +165,32 @@ impl FieldFlags {
         }
     }
 
+    // RuntimeAccount header layout (u32 LE):
+    //   byte 0: borrow_state  (0xFF = NOT_BORROWED)
+    //   byte 1: is_signer     (0 or 1)
+    //   byte 2: is_writable   (0 or 1)
+    //   byte 3: executable    (0 or 1)
+    const BORROW_STATE_BYTE: u32 = 0xFF;
+    const SIGNER_BIT: u32 = 0x01 << 8;
+    const WRITABLE_BIT: u32 = 0x01 << 16;
+    const EXECUTABLE_BIT: u32 = 0x01 << 24;
+    const SIGNER_MASK: u32 = 0xFF << 8;
+    const WRITABLE_MASK: u32 = 0xFF << 16;
+    const EXECUTABLE_MASK: u32 = 0xFF << 24;
+    const FLAG_ONLY_MASK: u32 = 0xFFFFFF00;
+
     /// The expected u32 header value (little-endian: [borrow, signer, writable,
     /// exec]).
     pub fn header_constant(&self) -> u32 {
-        let mut h: u32 = 0xFF; // byte 0: NOT_BORROWED
+        let mut h: u32 = Self::BORROW_STATE_BYTE;
         if self.is_signer {
-            h |= 0x01 << 8;
+            h |= Self::SIGNER_BIT;
         }
         if self.is_writable {
-            h |= 0x01 << 16;
+            h |= Self::WRITABLE_BIT;
         }
         if self.is_executable {
-            h |= 0x01 << 24;
+            h |= Self::EXECUTABLE_BIT;
         }
         h
     }
@@ -187,15 +201,15 @@ impl FieldFlags {
     /// actually requires. Extra permissions are masked out so they don't
     /// cause a rejection.
     pub fn required_mask(&self) -> u32 {
-        let mut mask: u32 = 0xFF; // always check borrow_state
+        let mut mask: u32 = Self::BORROW_STATE_BYTE;
         if self.is_signer {
-            mask |= 0xFF << 8;
+            mask |= Self::SIGNER_MASK;
         }
         if self.is_writable {
-            mask |= 0xFF << 16;
+            mask |= Self::WRITABLE_MASK;
         }
         if self.is_executable {
-            mask |= 0xFF << 24;
+            mask |= Self::EXECUTABLE_MASK;
         }
         mask
     }
@@ -203,7 +217,7 @@ impl FieldFlags {
     /// Flag-only mask (excludes borrow_state byte).
     /// Used in the dup-aware path where borrow_state is already validated.
     pub fn required_flag_mask(&self) -> u32 {
-        self.required_mask() & 0xFFFFFF00
+        self.required_mask() & Self::FLAG_ONLY_MASK
     }
 }
 
