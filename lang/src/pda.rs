@@ -24,6 +24,9 @@ const MAX_PDA_SLICES: usize = 19;
 /// "ProgramDerivedAddress")`.
 ///
 /// The seeds slice must already include the bump byte.
+// NOTE: Uses `#[inline]` rather than `#[inline(always)]` deliberately —
+// these functions are large enough that forced inlining at every callsite
+// risks .so bloat. Benchmark `#[inline(always)]` if CU regression appears.
 #[inline]
 pub fn verify_program_address(
     seeds: &[&[u8]],

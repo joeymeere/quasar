@@ -105,7 +105,15 @@ impl FieldEvidence {
         attrs: &super::attrs::AccountFieldAttrs,
         has_seeds: bool,
         is_init: bool,
+        needs_owner_check: bool,
     ) {
+        // --- Owner check evidence ---
+        if needs_owner_check && self.owner.is_none() {
+            panic!(
+                "BUG: field '{field_name}' requires owner+discriminator check but none was emitted",
+            );
+        }
+
         // --- Existing checks (PDA / bump / init) ---
         if has_seeds && self.pda.is_none() {
             panic!("BUG: field '{field_name}' declares seeds but no PDA verification was emitted",);

@@ -130,21 +130,40 @@ fn emit_find_with_check(
 /// - bare `bump`: try ix arg match, then BUMP_OFFSET fast path, then
 ///   find_program_address
 /// - missing bump: compile error
-#[allow(clippy::too_many_arguments)]
-fn gen_bump_check(
-    field_name: &Ident,
-    bump: &Option<Option<Expr>>,
-    bump_var: &Ident,
-    seed_idents: &[Ident],
-    seed_len_checks: &[proc_macro2::TokenStream],
-    addr_access: &proc_macro2::TokenStream,
+struct BumpCheckParams<'a> {
+    field_name: &'a Ident,
+    bump: &'a Option<Option<Expr>>,
+    bump_var: &'a Ident,
+    seed_idents: &'a [Ident],
+    seed_len_checks: &'a [proc_macro2::TokenStream],
+    addr_access: &'a proc_macro2::TokenStream,
     is_init_field: bool,
-    kind: &FieldKind<'_>,
-    instruction_args: &Option<Vec<InstructionArg>>,
+    kind: &'a FieldKind<'a>,
+    instruction_args: &'a Option<Vec<InstructionArg>>,
     bare_bump_pda_count: usize,
-    seeds_syntax_label: &str,
-    raw_seed_exprs: Option<&[Expr]>,
+    seeds_syntax_label: &'a str,
+    raw_seed_exprs: Option<&'a [Expr]>,
+}
+
+fn gen_bump_check(
+    p: &BumpCheckParams<'_>,
 ) -> Result<proc_macro2::TokenStream, proc_macro::TokenStream> {
+    let BumpCheckParams {
+        field_name,
+        bump,
+        bump_var,
+        seed_idents,
+        seed_len_checks,
+        addr_access,
+        is_init_field,
+        kind,
+        instruction_args,
+        bare_bump_pda_count,
+        seeds_syntax_label,
+        raw_seed_exprs,
+    } = p;
+    let is_init_field = *is_init_field;
+    let bare_bump_pda_count = *bare_bump_pda_count;
     // --- Compile-time PDA precomputation ---
     // When all seeds are byte literals and we can discover the program ID,
     // emit const bump + const address to skip runtime derivation entirely.
@@ -152,40 +171,38 @@ fn gen_bump_check(
         if let Some(seed_bytes) = crate::pda_precompute::seeds_as_byte_literals(seed_exprs) {
             if let Some(program_id) = crate::pda_precompute::discover_program_id() {
                 let seed_refs: Vec<&[u8]> = seed_bytes.iter().map(|v| v.as_slice()).collect();
-                {
-                    let (precomputed_bump, precomputed_addr) =
-                        crate::pda_precompute::precompute_pda(&seed_refs, &program_id);
-                    let bump_lit = precomputed_bump;
-                    let addr_bytes = precomputed_addr;
-                    let addr_array: Vec<proc_macro2::TokenStream> =
-                        addr_bytes.iter().map(|b| quote! { #b }).collect();
+                let (precomputed_bump, precomputed_addr) =
+                    crate::pda_precompute::precompute_pda(&seed_refs, &program_id);
+                let bump_lit = precomputed_bump;
+                let addr_bytes = precomputed_addr;
+                let addr_array: Vec<proc_macro2::TokenStream> =
+                    addr_bytes.iter().map(|b| quote! { #b }).collect();
 
-                    if is_init_field {
-                        // For init: emit const bump, skip find entirely.
-                        return Ok(quote! {
-                            {
-                                #bump_var = #bump_lit;
+                if is_init_field {
+                    // For init: emit const bump, skip find entirely.
+                    return Ok(quote! {
+                        {
+                            #bump_var = #bump_lit;
+                        }
+                    });
+                } else {
+                    // For non-init: emit const address, use keys_eq instead
+                    // of verify_program_address.
+                    return Ok(quote! {
+                        {
+                            const __PRECOMPUTED_PDA: quasar_lang::prelude::Address =
+                                quasar_lang::prelude::Address::new_from_array([#(#addr_array),*]);
+                            if !quasar_lang::keys_eq(&#addr_access, &__PRECOMPUTED_PDA) {
+                                #[cfg(feature = "debug")]
+                                quasar_lang::prelude::log(concat!(
+                                    "Account '", stringify!(#field_name),
+                                    "': PDA address mismatch (compile-time precomputed)"
+                                ));
+                                return Err(QuasarError::InvalidPda.into());
                             }
-                        });
-                    } else {
-                        // For non-init: emit const address, use keys_eq instead
-                        // of verify_program_address.
-                        return Ok(quote! {
-                            {
-                                const __PRECOMPUTED_PDA: quasar_lang::prelude::Address =
-                                    quasar_lang::prelude::Address::new_from_array([#(#addr_array),*]);
-                                if !quasar_lang::keys_eq(&#addr_access, &__PRECOMPUTED_PDA) {
-                                    #[cfg(feature = "debug")]
-                                    quasar_lang::prelude::log(concat!(
-                                        "Account '", stringify!(#field_name),
-                                        "': PDA address mismatch (compile-time precomputed)"
-                                    ));
-                                    return Err(QuasarError::InvalidPda.into());
-                                }
-                                #bump_var = #bump_lit;
-                            }
-                        });
-                    }
+                            #bump_var = #bump_lit;
+                        }
+                    });
                 }
             }
         }
@@ -417,7 +434,16 @@ fn gen_validation_checks(ctx: &FieldContext<'_>) -> Vec<proc_macro2::TokenStream
             Some(err) => quote! { #err.into() },
             None => quote! { QuasarError::HasOneMismatch.into() },
         };
+        let field_name_str = field_name.to_string();
+        let target_str = target.to_string();
         checks.push(quote! {
+            #[cfg(feature = "debug")]
+            if !quasar_lang::keys_eq(&#field_name.#target, #target.to_account_view().address()) {
+                quasar_lang::prelude::log(concat!(
+                    "has_one mismatch: ", #field_name_str, ".", #target_str,
+                    " != ", #target_str, ".address()"
+                ));
+            }
             quasar_lang::validation::check_address_match(
                 &#field_name.#target,
                 #target.to_account_view().address(),
@@ -607,6 +633,25 @@ fn gen_close_sweep(
     Ok(())
 }
 
+/// Register a bump variable, struct field, and init expression for a PDA field.
+fn register_bump_field(
+    field_name: &Ident,
+    bump_init_vars: &mut Vec<proc_macro2::TokenStream>,
+    bump_struct_fields: &mut Vec<proc_macro2::TokenStream>,
+    bump_struct_inits: &mut Vec<proc_macro2::TokenStream>,
+) -> (Ident, Ident) {
+    let bump_var = format_ident!("__bumps_{}", field_name);
+    bump_init_vars.push(quote! { let mut #bump_var: u8 = 0; });
+    bump_struct_fields.push(quote! { pub #field_name: u8 });
+    bump_struct_inits.push(quote! { #field_name: #bump_var });
+
+    let bump_arr_field = format_ident!("__{}_bump", field_name);
+    bump_struct_fields.push(quote! { #bump_arr_field: [u8; 1] });
+    bump_struct_inits.push(quote! { #bump_arr_field: [#bump_var] });
+
+    (bump_var, bump_arr_field)
+}
+
 /// Generate raw `seeds = [...]` PDA codegen for a single field.
 #[allow(clippy::too_many_arguments)]
 fn gen_raw_pda_seeds(
@@ -623,15 +668,12 @@ fn gen_raw_pda_seeds(
     let field_name = ctx.field_name;
     let field_name_strings = ctx.field_name_strings;
 
-    let bump_var = format_ident!("__bumps_{}", field_name);
-
-    bump_init_vars.push(quote! { let mut #bump_var: u8 = 0; });
-    bump_struct_fields.push(quote! { pub #field_name: u8 });
-    bump_struct_inits.push(quote! { #field_name: #bump_var });
-
-    let bump_arr_field = format_ident!("__{}_bump", field_name);
-    bump_struct_fields.push(quote! { #bump_arr_field: [u8; 1] });
-    bump_struct_inits.push(quote! { #bump_arr_field: [#bump_var] });
+    let (bump_var, bump_arr_field) = register_bump_field(
+        field_name,
+        bump_init_vars,
+        bump_struct_fields,
+        bump_struct_inits,
+    );
 
     let seed_slices: Vec<proc_macro2::TokenStream> = seed_exprs
         .iter()
@@ -705,20 +747,20 @@ fn gen_raw_pda_seeds(
         quote! { *#field_name.to_account_view().address() }
     };
 
-    let check = gen_bump_check(
+    let check = gen_bump_check(&BumpCheckParams {
         field_name,
-        &ctx.attrs.bump,
-        &bump_var,
-        &seed_idents,
-        &seed_len_checks,
-        &addr_access,
-        ctx.is_init_field,
-        &ctx.kind,
-        ctx.instruction_args,
+        bump: &ctx.attrs.bump,
+        bump_var: &bump_var,
+        seed_idents: &seed_idents,
+        seed_len_checks: &seed_len_checks,
+        addr_access: &addr_access,
+        is_init_field: ctx.is_init_field,
+        kind: &ctx.kind,
+        instruction_args: ctx.instruction_args,
         bare_bump_pda_count,
-        "seeds = [...]",
-        Some(seed_exprs),
-    )?;
+        seeds_syntax_label: "seeds = [...]",
+        raw_seed_exprs: Some(seed_exprs),
+    })?;
     target_checks.push(check);
 
     let method_name = format_ident!("{}_seeds", field_name);
@@ -773,15 +815,12 @@ fn gen_typed_pda_seeds(
     let instruction_args = ctx.instruction_args;
     let type_path = &typed.type_path;
 
-    let bump_var = format_ident!("__bumps_{}", field_name);
-
-    bump_init_vars.push(quote! { let mut #bump_var: u8 = 0; });
-    bump_struct_fields.push(quote! { pub #field_name: u8 });
-    bump_struct_inits.push(quote! { #field_name: #bump_var });
-
-    let bump_arr_field = format_ident!("__{}_bump", field_name);
-    bump_struct_fields.push(quote! { #bump_arr_field: [u8; 1] });
-    bump_struct_inits.push(quote! { #bump_arr_field: [#bump_var] });
+    let (bump_var, bump_arr_field) = register_bump_field(
+        field_name,
+        bump_init_vars,
+        bump_struct_fields,
+        bump_struct_inits,
+    );
 
     // Build seed slices: prefix from type const + dynamic args
     let mut all_seed_slices: Vec<proc_macro2::TokenStream> =
@@ -875,20 +914,20 @@ fn gen_typed_pda_seeds(
         quote! { *#field_name.to_account_view().address() }
     };
 
-    let check = gen_bump_check(
+    let check = gen_bump_check(&BumpCheckParams {
         field_name,
-        &ctx.attrs.bump,
-        &bump_var,
-        &seed_idents,
-        &seed_len_checks,
-        &addr_access,
-        ctx.is_init_field,
-        &ctx.kind,
+        bump: &ctx.attrs.bump,
+        bump_var: &bump_var,
+        seed_idents: &seed_idents,
+        seed_len_checks: &seed_len_checks,
+        addr_access: &addr_access,
+        is_init_field: ctx.is_init_field,
+        kind: &ctx.kind,
         instruction_args,
         bare_bump_pda_count,
-        "seeds = Type::seeds(...)",
-        None, // typed seeds can't be precomputed at macro time
-    )?;
+        seeds_syntax_label: "seeds = Type::seeds(...)",
+        raw_seed_exprs: None, // typed seeds can't be precomputed at macro time
+    })?;
     target_checks.push(check);
 
     // CPI seed method — generated on the Accounts struct with a
@@ -1206,11 +1245,11 @@ pub(crate) fn process_fields(
     };
 
     let update_authority_field = if has_any_metadata_init || has_any_master_edition_init {
-        Some(
-            detected
-                .update_authority
-                .expect("update_authority field must be present for metadata/master_edition init"),
-        )
+        Some(DetectedFields::require(
+            detected.update_authority,
+            "`metadata::*` / `master_edition::*` requires an `update_authority` or `authority` \
+             field",
+        )?)
     } else {
         None
     };
@@ -1359,7 +1398,20 @@ pub(crate) fn process_fields(
         let mut evidence = FieldEvidence::default();
 
         let mut this_field_checks = gen_type_checks(&ctx, skip_mut_checks);
-        if !skip_mut_checks && matches!(ctx.kind, FieldKind::Account { .. }) {
+        // Owner evidence is produced when gen_type_checks actually emits the
+        // check. When skip_mut_checks is true (init, init_if_needed, token
+        // validate), the owner check is deferred to init/validate codegen.
+        let needs_owner_check = !skip_mut_checks
+            && matches!(
+                ctx.kind,
+                FieldKind::Account { .. }
+                    | FieldKind::InterfaceAccount { .. }
+                    | FieldKind::Sysvar { .. }
+                    | FieldKind::Program { .. }
+                    | FieldKind::Interface { .. }
+                    | FieldKind::SystemAccount
+            );
+        if needs_owner_check {
             evidence.owner = Some(OwnerEvidence::produced());
         }
 
@@ -1532,7 +1584,13 @@ pub(crate) fn process_fields(
 
         // Validate that every declared constraint produced its evidence.
         let has_seeds = attrs.seeds.is_some() || attrs.typed_seeds.is_some();
-        evidence.validate(&field_name.to_string(), attrs, has_seeds, is_init_field);
+        evidence.validate(
+            &field_name.to_string(),
+            attrs,
+            has_seeds,
+            is_init_field,
+            needs_owner_check,
+        );
 
         if !this_field_checks.is_empty() {
             if is_optional {

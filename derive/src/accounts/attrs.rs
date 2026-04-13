@@ -59,263 +59,228 @@ impl Parse for AccountDirective {
             return Ok(Self::Mut);
         }
         let key: Ident = input.parse()?;
-        match key.to_string().as_str() {
-            "init" => Ok(Self::Init),
-            "init_if_needed" => Ok(Self::InitIfNeeded),
-            "dup" => Ok(Self::Dup),
-            "close" => {
-                let _: Token![=] = input.parse()?;
-                let ident: Ident = input.parse()?;
-                Ok(Self::Close(ident))
-            }
-            "payer" => {
-                let _: Token![=] = input.parse()?;
-                let ident: Ident = input.parse()?;
-                Ok(Self::Payer(ident))
-            }
-            "space" => {
-                let _: Token![=] = input.parse()?;
+        if key == "init" {
+            Ok(Self::Init)
+        } else if key == "init_if_needed" {
+            Ok(Self::InitIfNeeded)
+        } else if key == "dup" {
+            Ok(Self::Dup)
+        } else if key == "close" {
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            Ok(Self::Close(ident))
+        } else if key == "payer" {
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            Ok(Self::Payer(ident))
+        } else if key == "space" {
+            let _: Token![=] = input.parse()?;
+            let expr: Expr = input.parse()?;
+            Ok(Self::Space(expr))
+        } else if key == "has_one" {
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            let error = if input.peek(Token![@]) {
+                input.parse::<Token![@]>()?;
+                Some(input.parse::<Expr>()?)
+            } else {
+                None
+            };
+            Ok(Self::HasOne(ident, error))
+        } else if key == "constraint" {
+            let _: Token![=] = input.parse()?;
+            let expr: Expr = input.parse()?;
+            let error = if input.peek(Token![@]) {
+                input.parse::<Token![@]>()?;
+                Some(input.parse::<Expr>()?)
+            } else {
+                None
+            };
+            Ok(Self::Constraint(expr, error))
+        } else if key == "address" {
+            let _: Token![=] = input.parse()?;
+            let expr: Expr = input.parse()?;
+            let error = if input.peek(Token![@]) {
+                input.parse::<Token![@]>()?;
+                Some(input.parse::<Expr>()?)
+            } else {
+                None
+            };
+            Ok(Self::Address(expr, error))
+        } else if key == "seeds" {
+            let _: Token![=] = input.parse()?;
+            if input.peek(syn::token::Bracket) {
+                // Old syntax: seeds = [expr1, expr2, ...]
+                let arr: ExprArray = input.parse()?;
+                Ok(Self::Seeds(arr.elems.into_iter().collect()))
+            } else {
+                // New syntax: seeds = Type::seeds(arg1, arg2)
                 let expr: Expr = input.parse()?;
-                Ok(Self::Space(expr))
-            }
-            "has_one" => {
-                let _: Token![=] = input.parse()?;
-                let ident: Ident = input.parse()?;
-                let error = if input.peek(Token![@]) {
-                    input.parse::<Token![@]>()?;
-                    Some(input.parse::<Expr>()?)
-                } else {
-                    None
-                };
-                Ok(Self::HasOne(ident, error))
-            }
-            "constraint" => {
-                let _: Token![=] = input.parse()?;
-                let expr: Expr = input.parse()?;
-                let error = if input.peek(Token![@]) {
-                    input.parse::<Token![@]>()?;
-                    Some(input.parse::<Expr>()?)
-                } else {
-                    None
-                };
-                Ok(Self::Constraint(expr, error))
-            }
-            "address" => {
-                let _: Token![=] = input.parse()?;
-                let expr: Expr = input.parse()?;
-                let error = if input.peek(Token![@]) {
-                    input.parse::<Token![@]>()?;
-                    Some(input.parse::<Expr>()?)
-                } else {
-                    None
-                };
-                Ok(Self::Address(expr, error))
-            }
-            "seeds" => {
-                let _: Token![=] = input.parse()?;
-                if input.peek(syn::token::Bracket) {
-                    // Old syntax: seeds = [expr1, expr2, ...]
-                    let arr: ExprArray = input.parse()?;
-                    Ok(Self::Seeds(arr.elems.into_iter().collect()))
-                } else {
-                    // New syntax: seeds = Type::seeds(arg1, arg2)
-                    let expr: Expr = input.parse()?;
-                    match expr {
-                        Expr::Call(call) => {
-                            if let Expr::Path(ref func_path) = *call.func {
-                                let segments = &func_path.path.segments;
-                                if segments.last().map(|s| s.ident == "seeds") != Some(true) {
-                                    return Err(syn::Error::new_spanned(
-                                        &func_path.path,
-                                        "expected Type::seeds(...)",
-                                    ));
-                                }
-                                // Build type path: all segments except the last "seeds"
-                                let all: Vec<syn::PathSegment> = segments.iter().cloned().collect();
-                                if all.len() < 2 {
-                                    return Err(syn::Error::new_spanned(
-                                        &func_path.path,
-                                        "expected Type::seeds(...), not just seeds(...)",
-                                    ));
-                                }
-                                let type_segs = &all[..all.len() - 1];
-                                let mut type_segments = syn::punctuated::Punctuated::new();
-                                for (i, seg) in type_segs.iter().enumerate() {
-                                    type_segments.push_value(seg.clone());
-                                    if i < type_segs.len() - 1 {
-                                        type_segments.push_punct(<Token![::]>::default());
-                                    }
-                                }
-                                let type_path = syn::Path {
-                                    leading_colon: func_path.path.leading_colon,
-                                    segments: type_segments,
-                                };
-                                Ok(Self::TypedSeeds(TypedSeeds {
-                                    type_path,
-                                    args: call.args.into_iter().collect(),
-                                }))
-                            } else {
-                                Err(syn::Error::new_spanned(
-                                    call.func,
+                match expr {
+                    Expr::Call(call) => {
+                        if let Expr::Path(ref func_path) = *call.func {
+                            let segments = &func_path.path.segments;
+                            if segments.last().map(|s| s.ident == "seeds") != Some(true) {
+                                return Err(syn::Error::new_spanned(
+                                    &func_path.path,
                                     "expected Type::seeds(...)",
-                                ))
+                                ));
                             }
+                            let all: Vec<syn::PathSegment> = segments.iter().cloned().collect();
+                            if all.len() < 2 {
+                                return Err(syn::Error::new_spanned(
+                                    &func_path.path,
+                                    "expected Type::seeds(...), not just seeds(...)",
+                                ));
+                            }
+                            let type_segs = &all[..all.len() - 1];
+                            let mut type_segments = syn::punctuated::Punctuated::new();
+                            for (i, seg) in type_segs.iter().enumerate() {
+                                type_segments.push_value(seg.clone());
+                                if i < type_segs.len() - 1 {
+                                    type_segments.push_punct(<Token![::]>::default());
+                                }
+                            }
+                            let type_path = syn::Path {
+                                leading_colon: func_path.path.leading_colon,
+                                segments: type_segments,
+                            };
+                            Ok(Self::TypedSeeds(TypedSeeds {
+                                type_path,
+                                args: call.args.into_iter().collect(),
+                            }))
+                        } else {
+                            Err(syn::Error::new_spanned(
+                                call.func,
+                                "expected Type::seeds(...)",
+                            ))
                         }
-                        _ => Err(syn::Error::new_spanned(
-                            expr,
-                            "expected seeds = [...] or seeds = Type::seeds(...)",
-                        )),
                     }
+                    _ => Err(syn::Error::new_spanned(
+                        expr,
+                        "expected seeds = [...] or seeds = Type::seeds(...)",
+                    )),
                 }
             }
-            "bump" => {
-                if input.peek(Token![=]) {
+        } else if key == "bump" {
+            if input.peek(Token![=]) {
+                let _: Token![=] = input.parse()?;
+                Ok(Self::Bump(Some(input.parse()?)))
+            } else {
+                Ok(Self::Bump(None))
+            }
+        } else if key == "sweep" {
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            Ok(Self::Sweep(ident))
+        } else if key == "realloc" {
+            if input.peek(Token![::]) {
+                input.parse::<Token![::]>()?;
+                let sub_key: Ident = input.parse()?;
+                if sub_key == "payer" {
                     let _: Token![=] = input.parse()?;
-                    Ok(Self::Bump(Some(input.parse()?)))
+                    let ident: Ident = input.parse()?;
+                    Ok(Self::ReallocPayer(ident))
                 } else {
-                    Ok(Self::Bump(None))
+                    Err(syn::Error::new(
+                        sub_key.span(),
+                        format!("unknown realloc attribute: `realloc::{sub_key}`"),
+                    ))
                 }
-            }
-            "sweep" => {
+            } else {
                 let _: Token![=] = input.parse()?;
-                let ident: Ident = input.parse()?;
-                Ok(Self::Sweep(ident))
+                let expr: Expr = input.parse()?;
+                Ok(Self::Realloc(expr))
             }
-            "realloc" => {
-                if input.peek(Token![::]) {
-                    input.parse::<Token![::]>()?;
-                    let sub_key: Ident = input.parse()?;
-                    match sub_key.to_string().as_str() {
-                        "payer" => {
-                            let _: Token![=] = input.parse()?;
-                            let ident: Ident = input.parse()?;
-                            Ok(Self::ReallocPayer(ident))
-                        }
-                        _ => Err(syn::Error::new(
-                            sub_key.span(),
-                            format!("unknown realloc attribute: `realloc::{}`", sub_key),
-                        )),
-                    }
-                } else {
-                    let _: Token![=] = input.parse()?;
-                    let expr: Expr = input.parse()?;
-                    Ok(Self::Realloc(expr))
-                }
+        } else if key == "token" {
+            input.parse::<Token![::]>()?;
+            let sub_key: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            if sub_key == "mint" {
+                Ok(Self::TokenMint(ident))
+            } else if sub_key == "authority" {
+                Ok(Self::TokenAuthority(ident))
+            } else if sub_key == "token_program" {
+                Ok(Self::TokenTokenProgram(ident))
+            } else {
+                Err(syn::Error::new(
+                    sub_key.span(),
+                    format!("unknown token attribute: `token::{sub_key}`"),
+                ))
             }
-            "token" => {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                match sub_key.to_string().as_str() {
-                    "mint" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::TokenMint(ident))
-                    }
-                    "authority" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::TokenAuthority(ident))
-                    }
-                    "token_program" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::TokenTokenProgram(ident))
-                    }
-                    _ => Err(syn::Error::new(
-                        sub_key.span(),
-                        format!("unknown token attribute: `token::{}`", sub_key),
-                    )),
-                }
+        } else if key == "mint" {
+            input.parse::<Token![::]>()?;
+            let sub_key: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            if sub_key == "decimals" {
+                Ok(Self::MintDecimals(input.parse()?))
+            } else if sub_key == "authority" {
+                Ok(Self::MintInitAuthority(input.parse()?))
+            } else if sub_key == "freeze_authority" {
+                Ok(Self::MintFreezeAuthority(input.parse()?))
+            } else if sub_key == "token_program" {
+                Ok(Self::MintTokenProgram(input.parse()?))
+            } else {
+                Err(syn::Error::new(
+                    sub_key.span(),
+                    format!("unknown mint attribute: `mint::{sub_key}`"),
+                ))
             }
-            "mint" => {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                let _: Token![=] = input.parse()?;
-                match sub_key.to_string().as_str() {
-                    "decimals" => Ok(Self::MintDecimals(input.parse()?)),
-                    "authority" => {
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::MintInitAuthority(ident))
-                    }
-                    "freeze_authority" => {
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::MintFreezeAuthority(ident))
-                    }
-                    "token_program" => {
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::MintTokenProgram(ident))
-                    }
-                    _ => Err(syn::Error::new(
-                        sub_key.span(),
-                        format!("unknown mint attribute: `mint::{}`", sub_key),
-                    )),
-                }
+        } else if key == "associated_token" {
+            input.parse::<Token![::]>()?;
+            let sub_key: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            let ident: Ident = input.parse()?;
+            if sub_key == "mint" {
+                Ok(Self::AssociatedTokenMint(ident))
+            } else if sub_key == "authority" {
+                Ok(Self::AssociatedTokenAuthority(ident))
+            } else if sub_key == "token_program" {
+                Ok(Self::AssociatedTokenTokenProgram(ident))
+            } else {
+                Err(syn::Error::new(
+                    sub_key.span(),
+                    format!("unknown associated_token attribute: `associated_token::{sub_key}`"),
+                ))
             }
-            "associated_token" => {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                match sub_key.to_string().as_str() {
-                    "mint" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::AssociatedTokenMint(ident))
-                    }
-                    "authority" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::AssociatedTokenAuthority(ident))
-                    }
-                    "token_program" => {
-                        let _: Token![=] = input.parse()?;
-                        let ident: Ident = input.parse()?;
-                        Ok(Self::AssociatedTokenTokenProgram(ident))
-                    }
-                    _ => Err(syn::Error::new(
-                        sub_key.span(),
-                        format!(
-                            "unknown associated_token attribute: `associated_token::{}`",
-                            sub_key
-                        ),
-                    )),
-                }
+        } else if key == "metadata" {
+            input.parse::<Token![::]>()?;
+            let sub_key: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            if sub_key == "name" {
+                Ok(Self::MetadataName(input.parse()?))
+            } else if sub_key == "symbol" {
+                Ok(Self::MetadataSymbol(input.parse()?))
+            } else if sub_key == "uri" {
+                Ok(Self::MetadataUri(input.parse()?))
+            } else if sub_key == "seller_fee_basis_points" {
+                Ok(Self::MetadataSellerFeeBasisPoints(input.parse()?))
+            } else if sub_key == "is_mutable" {
+                Ok(Self::MetadataIsMutable(input.parse()?))
+            } else {
+                Err(syn::Error::new(
+                    sub_key.span(),
+                    format!("unknown metadata attribute: `metadata::{sub_key}`"),
+                ))
             }
-            "metadata" => {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                let _: Token![=] = input.parse()?;
-                match sub_key.to_string().as_str() {
-                    "name" => Ok(Self::MetadataName(input.parse()?)),
-                    "symbol" => Ok(Self::MetadataSymbol(input.parse()?)),
-                    "uri" => Ok(Self::MetadataUri(input.parse()?)),
-                    "seller_fee_basis_points" => {
-                        Ok(Self::MetadataSellerFeeBasisPoints(input.parse()?))
-                    }
-                    "is_mutable" => Ok(Self::MetadataIsMutable(input.parse()?)),
-                    _ => Err(syn::Error::new(
-                        sub_key.span(),
-                        format!("unknown metadata attribute: `metadata::{}`", sub_key),
-                    )),
-                }
+        } else if key == "master_edition" {
+            input.parse::<Token![::]>()?;
+            let sub_key: Ident = input.parse()?;
+            let _: Token![=] = input.parse()?;
+            if sub_key == "max_supply" {
+                Ok(Self::MasterEditionMaxSupply(input.parse()?))
+            } else {
+                Err(syn::Error::new(
+                    sub_key.span(),
+                    format!("unknown master_edition attribute: `master_edition::{sub_key}`"),
+                ))
             }
-            "master_edition" => {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                let _: Token![=] = input.parse()?;
-                match sub_key.to_string().as_str() {
-                    "max_supply" => Ok(Self::MasterEditionMaxSupply(input.parse()?)),
-                    _ => Err(syn::Error::new(
-                        sub_key.span(),
-                        format!(
-                            "unknown master_edition attribute: `master_edition::{}`",
-                            sub_key
-                        ),
-                    )),
-                }
-            }
-            _ => Err(syn::Error::new(
+        } else {
+            Err(syn::Error::new(
                 key.span(),
-                format!("unknown account attribute: `{}`", key),
-            )),
+                format!("unknown account attribute: `{key}`"),
+            ))
         }
     }
 }

@@ -243,6 +243,16 @@ static COMPOSITION_RULES: &[Rule] = &[
         kind: KindPred::NotOptional,
         msg: "#[account(realloc)] cannot be used on Option<Account<T>> fields",
     },
+    Rule::Requires {
+        when: Pred::Sweep,
+        requires: Pred::TokenMint,
+        msg: "#[account(sweep)] requires `token::mint` and `token::authority`",
+    },
+    Rule::Requires {
+        when: Pred::Sweep,
+        requires: Pred::TokenAuthority,
+        msg: "#[account(sweep)] requires `token::mint` and `token::authority`",
+    },
     Rule::RequiresKind {
         when: Pred::Sweep,
         kind: KindPred::TokenAccount,

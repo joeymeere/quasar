@@ -14,11 +14,7 @@ pub(super) enum TokenProgramResolution {
 }
 
 impl TokenProgramResolution {
-    pub(super) fn fallback_to_single_field(self) -> bool {
-        matches!(self, TokenProgramResolution::FallbackRequired)
-    }
-
-    pub(super) fn require_account_field(self) -> bool {
+    pub(super) fn needs_fallback(self) -> bool {
         matches!(self, TokenProgramResolution::FallbackRequired)
     }
 }
@@ -268,20 +264,7 @@ pub(super) fn resolve_token_program_field<'a>(
         .into());
     }
 
-    if resolution.fallback_to_single_field() {
-        if resolution.require_account_field() {
-            return Ok(Some(DetectedFields::require(
-                detected.token_program,
-                &format!(
-                    "{consumer_desc} requires a token program field (Program<Token>, \
-                     Program<Token2022>, or Interface<TokenInterface>)"
-                ),
-            )?));
-        }
-        return Ok(detected.token_program);
-    }
-
-    if resolution.require_account_field() {
+    if resolution.needs_fallback() {
         return Ok(Some(DetectedFields::require(
             detected.token_program,
             &format!(
@@ -315,7 +298,7 @@ pub(super) fn resolve_token_program_addr(
         }
     }
 
-    let tp = token_program_field
-        .expect("InterfaceAccount with token/ata attrs requires a token program field");
-    quote! { #tp.to_account_view().address() }
+    // Unreachable if callers resolve the token program field before calling.
+    // Composition rules guarantee token/ata attrs have a token program.
+    panic!("BUG: InterfaceAccount with token/ata attrs requires a token program field")
 }
