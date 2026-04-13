@@ -184,10 +184,7 @@ mod quasar_test_misc {
     }
 
     #[instruction(discriminator = 29)]
-    pub fn dyn_bytes_check(
-        ctx: Ctx<DynBytesCheck>,
-        expected_len: u8,
-    ) -> Result<(), ProgramError> {
+    pub fn dyn_bytes_check(ctx: Ctx<DynBytesCheck>, expected_len: u8) -> Result<(), ProgramError> {
         ctx.accounts.handler(expected_len)
     }
 

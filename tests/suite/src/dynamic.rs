@@ -17,7 +17,8 @@ const DYN_BYTES_DISC: u8 = 9;
 const DYN_FIXED_SIZE: usize = 32; // Address
 
 fn build_dynamic_account_data(name: &[u8], tags: &[Address]) -> Vec<u8> {
-    // Layout: [disc(1)][u8:name_len(1)][name_bytes][u16:tags_count(2)][tag_elements]
+    // Layout: [disc(1)][u8:name_len(1)][name_bytes][u16:
+    // tags_count(2)][tag_elements]
     let name_len = name.len();
     let tags_count = tags.len();
     let tags_bytes = tags_count * 32;
@@ -69,7 +70,8 @@ fn build_mixed_account_data(authority: Address, value: u64, label: &[u8]) -> Vec
 }
 
 fn build_small_prefix_account_data(tag: &[u8], scores: &[u8]) -> Vec<u8> {
-    // Layout: [disc(1)][u8:tag_len(1)][tag_bytes][u16:scores_count(2)][score_elements]
+    // Layout: [disc(1)][u8:tag_len(1)][tag_bytes][u16:
+    // scores_count(2)][score_elements]
     let tag_len = tag.len();
     let scores_count = scores.len();
     let total = 1 + 1 + tag_len + 2 + scores_count;
@@ -167,7 +169,10 @@ fn build_dyn_str_account_data(authority: Address, label: &[u8]) -> Vec<u8> {
 
 fn build_dyn_bytes_account_data(authority: Address, payload: &[u8]) -> Vec<u8> {
     // Layout: [disc(1)][authority(32)][u16_count_le(2)][data_bytes...]
-    assert!(payload.len() <= 1024, "payload exceeds Vec<u8, 1024> capacity");
+    assert!(
+        payload.len() <= 1024,
+        "payload exceeds Vec<u8, 1024> capacity"
+    );
     let count = payload.len() as u16;
     let mut data = vec![0u8; 1 + DYN_FIXED_SIZE + 2 + payload.len()];
     data[0] = DYN_BYTES_DISC;
@@ -512,7 +517,8 @@ fn test_dynamic_account_minimum_size_empty_fields() {
     let mollusk = setup();
     let account = Address::new_unique();
 
-    // Minimum valid data: disc(1) + u8 name_len=0(1) + u16 tags_count=0(2) = 4 bytes
+    // Minimum valid data: disc(1) + u8 name_len=0(1) + u16 tags_count=0(2) = 4
+    // bytes
     let data = build_dynamic_account_data(b"", &[]);
     assert_eq!(
         data.len(),
@@ -1344,7 +1350,8 @@ fn test_dynamic_mutate_exceeds_max_rejected() {
 // ADVERSARIAL TESTS: Crafted Prefix Attacks
 // ============================================================================
 
-/// u8 prefix claiming 255 bytes — validation must reject (max=8), not wrap/panic
+/// u8 prefix claiming 255 bytes — validation must reject (max=8), not
+/// wrap/panic
 #[test]
 fn test_adversarial_prefix_u8_max_name_len() {
     let mollusk = setup();
@@ -2048,8 +2055,16 @@ fn test_adversarial_sequential_mutations_grow_shrink_grow() {
     assert_eq!(&rd[2..8], b"abcdef");
     let tags_count = u16::from_le_bytes(rd[8..10].try_into().unwrap()) as usize;
     assert_eq!(tags_count, 2);
-    assert_eq!(&rd[10..42], tag1.as_ref(), "tag1 corrupted after 3 mutations");
-    assert_eq!(&rd[42..74], tag2.as_ref(), "tag2 corrupted after 3 mutations");
+    assert_eq!(
+        &rd[10..42],
+        tag1.as_ref(),
+        "tag1 corrupted after 3 mutations"
+    );
+    assert_eq!(
+        &rd[42..74],
+        tag2.as_ref(),
+        "tag2 corrupted after 3 mutations"
+    );
 }
 
 /// Mutate to same name (no-op path): verifies no data corruption
@@ -2152,7 +2167,8 @@ fn test_adversarial_missing_second_prefix() {
     );
 }
 
-/// Partial u16 tags prefix: name is empty (u8=0) but only 1 of 2 tag prefix bytes present
+/// Partial u16 tags prefix: name is empty (u8=0) but only 1 of 2 tag prefix
+/// bytes present
 #[test]
 fn test_adversarial_partial_u32_prefix() {
     let mollusk = setup();
