@@ -103,9 +103,10 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     /// ```ignore
     /// const _: () = PodVec::<u8, 300, 1>::VALID; // compile error: N exceeds prefix range
     /// ```
+    #[allow(clippy::let_unit_value)]
     pub const VALID: () = {
-        Self::_ALIGN_CHECK;
-        Self::_CAP_CHECK;
+        let _ = Self::_ALIGN_CHECK;
+        let _ = Self::_CAP_CHECK;
     };
 
     /// Decode the on-disk length prefix into a `usize`.
