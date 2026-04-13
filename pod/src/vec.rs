@@ -1,14 +1,9 @@
 //! Fixed-capacity inline vector for zero-copy account data.
 //!
 //! `PodVec<T, N>` stores up to `N` elements of type `T` with a `PodU16` length
-//! prefix. When used in `#[account]` structs (as `Vec<T, N>`), the derive macro
-//! generates dynamic sizing — account data stores only actual elements, not
-//! full capacity. Mutations go through a `DynGuard` RAII wrapper that loads
-//! into a stack-local copy and auto-saves on drop.
-//!
-//! The tradeoff is rent: the full `N * size_of::<T>()` bytes are always
-//! allocated. Use `PodVec` for small, frequently-mutated collections
-//! (signers, whitelist entries, scores).
+//! prefix. It is a fixed-size Pod type: the struct always occupies
+//! `2 + N * size_of::<T>()` bytes in memory and on-disk, regardless of how
+//! many elements are active.
 //!
 //! # Layout
 //!
@@ -23,20 +18,27 @@
 //!
 //! # Usage in account structs
 //!
-//! `PodVec<T, N>` is a fixed-size Pod type — use it directly in `#[account]`
-//! structs. Writes go through `DerefMut` on `Account<T>`:
+//! **As `PodVec<T, N>` directly (or via `fixed_capacity`):**
+//! The full capacity is always in account data — no realloc ever. Best when
+//! the worst-case rent cost is acceptable.
 //!
 //! ```ignore
 //! #[account(discriminator = 1)]
 //! pub struct Multisig {
 //!     pub threshold: u8,
-//!     pub signers: PodVec<Address, 10>,  // 2 + 320 bytes in account data
+//!     pub signers: PodVec<Address, 10>,  // always 2 + 320 bytes on-chain
 //! }
 //!
-//! // In instruction handler:
-//! ctx.accounts.multisig.signers.push(new_signer);
+//! // Direct zero-copy write — no guard needed:
+//! let ok = ctx.accounts.multisig.signers.push(new_signer);
 //! ctx.accounts.multisig.signers[0] = replacement;
 //! ```
+//!
+//! **As `Vec<T, N>` in `#[account]` structs (dynamic sizing):**
+//! The derive macro generates a `DynGuard` RAII wrapper. Account data stores
+//! only the active elements (`[len: u16][active elements]`), so rent scales
+//! with content. `PodVec` is used as the stack-local copy — loaded on guard
+//! creation, flushed back (with one realloc CPI if size changes) on drop.
 
 use {super::PodU16, core::mem::MaybeUninit};
 

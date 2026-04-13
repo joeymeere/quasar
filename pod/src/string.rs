@@ -1,14 +1,8 @@
 //! Fixed-capacity inline string for zero-copy account data.
 //!
 //! `PodString<N>` stores up to `N` bytes (max 255) with a `u8` length prefix.
-//! When used in `#[account]` structs (as `String<N>`), the derive macro
-//! generates dynamic sizing — account data stores only actual bytes, not full
-//! capacity. Mutations go through a `DynGuard` RAII wrapper that loads into a
-//! stack-local copy and auto-saves on drop (~5 CU total).
-//!
-//! The tradeoff is rent: the full `N` bytes are always allocated in the account
-//! even if the string is shorter or empty. Use `PodString` for small,
-//! frequently-mutated fields (labels, names, symbols, tickers).
+//! It is a fixed-size Pod type: the struct always occupies `1 + N` bytes in
+//! memory and on-disk, regardless of the active string length.
 //!
 //! # Layout
 //!
@@ -22,19 +16,26 @@
 //!
 //! # Usage in account structs
 //!
-//! `PodString<N>` is a fixed-size Pod type — use it directly in `#[account]`
-//! structs. Writes go through `DerefMut` on `Account<T>`:
+//! **As `PodString<N>` directly (or via `fixed_capacity`):**
+//! The full `1 + N` bytes are always in account data — no realloc ever. Best
+//! when the worst-case rent cost is acceptable.
 //!
 //! ```ignore
 //! #[account(discriminator = 1)]
 //! pub struct Config {
-//!     pub label: PodString<32>,   // 33 bytes in account data
+//!     pub label: PodString<32>,   // always 33 bytes on-chain
 //!     pub owner: Address,
 //! }
 //!
-//! // In instruction handler:
-//! ctx.accounts.config.label.set("my-label");
+//! // Direct zero-copy write — no guard needed:
+//! let ok = ctx.accounts.config.label.set("my-label");
 //! ```
+//!
+//! **As `String<N>` in `#[account]` structs (dynamic sizing):**
+//! The derive macro generates a `DynGuard` RAII wrapper. Account data stores
+//! only the active bytes (`[len: u8][active bytes]`), so rent scales with
+//! content. `PodString` is used as the stack-local copy — loaded on guard
+//! creation, flushed back (with one realloc CPI if size changes) on drop.
 
 use core::mem::MaybeUninit;
 
