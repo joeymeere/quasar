@@ -97,9 +97,6 @@ pub mod client;
 pub mod context;
 /// Const-generic cross-program invocation with stack-allocated account arrays.
 pub mod cpi;
-/// Marker types for dynamic fields (`String<P, N>`, `Vec<T, P, N>`) and codec
-/// helpers.
-pub mod dynamic;
 /// Program entrypoint macros (`dispatch!`, `no_alloc!`, `panic_handler!`).
 pub mod entrypoint;
 /// Framework error types.
@@ -109,7 +106,7 @@ pub mod event;
 /// Trait for fixed-size instruction argument types with alignment-1 ZC
 /// companions.
 pub mod instruction_arg;
-/// Instruction data deserialization for dynamic fields (strings, vecs, tails).
+/// Instruction data deserialization for dynamic fields (strings and vecs).
 pub mod instruction_data;
 /// Low-level `sol_log_data` syscall wrapper.
 pub mod log;

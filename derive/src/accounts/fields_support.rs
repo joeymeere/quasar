@@ -298,7 +298,8 @@ pub(super) fn resolve_token_program_addr(
         }
     }
 
-    // Unreachable if callers resolve the token program field before calling.
-    // Composition rules guarantee token/ata attrs have a token program.
-    panic!("BUG: InterfaceAccount with token/ata attrs requires a token program field")
+    // Composition rules and validate_composition guarantee that every
+    // InterfaceAccount with token/ata attrs has a resolved token program field.
+    // Reaching here means a handler bypassed that check — this is a framework bug.
+    unreachable!("BUG: InterfaceAccount with token/ata attrs requires a token program field")
 }

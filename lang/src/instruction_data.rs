@@ -1,6 +1,6 @@
 //! Instruction data deserialization helpers for dynamic fields.
 //!
-//! These functions extract variable-length instruction arguments (strings,
+//! These functions extract variable-length instruction arguments (strings and
 //! byte vectors) from raw instruction bytes. They are called by
 //! proc-macro-generated `#[instruction]` code.
 //!

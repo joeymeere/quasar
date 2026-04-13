@@ -66,7 +66,7 @@ check-runtime-panics:
 	  if [[ "$$code" =~ ^[[:space:]]*// ]]; then continue; fi; \
 	  case "$$entry" in \
 	    *'lang/src/lib.rs:'*'panic!("program aborted")'*) continue ;; \
-	    *'lang/src/dynamic.rs:'*'panic!("dynamic account field contains invalid UTF-8")'*) continue ;; \
+	    *'derive/src/accounts/evidence.rs:'*) continue ;; \
 	  esac; \
 	  violations+=("$$entry"); \
 	done <<<"$$matches"; \

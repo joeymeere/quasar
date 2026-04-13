@@ -12,17 +12,14 @@ use {
 
 /// Predicate over the constraint set for a single field.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // Dup, AnySeeds exist for future rule-table completeness
 enum Pred {
     Init,
     InitIfNeeded,
     AnyInit,
     Close,
     Sweep,
-    Dup,
     Payer,
     Space,
-    Seeds,
     AnySeeds,
     Realloc,
     ReallocPayer,
@@ -49,10 +46,8 @@ impl Pred {
             Pred::AnyInit => attrs.is_init || attrs.init_if_needed,
             Pred::Close => attrs.close.is_some(),
             Pred::Sweep => attrs.sweep.is_some(),
-            Pred::Dup => attrs.dup,
             Pred::Payer => attrs.payer.is_some(),
             Pred::Space => attrs.space.is_some(),
-            Pred::Seeds => attrs.seeds.is_some(),
             Pred::AnySeeds => attrs.seeds.is_some() || attrs.typed_seeds.is_some(),
             Pred::Realloc => attrs.realloc.is_some(),
             Pred::ReallocPayer => attrs.realloc_payer.is_some(),
@@ -151,7 +146,7 @@ static COMPOSITION_RULES: &[Rule] = &[
         msg: "`token::*` and `associated_token::*` cannot be used on the same field",
     },
     Rule::Incompatible {
-        a: Pred::Seeds,
+        a: Pred::AnySeeds,
         b: Pred::AtaMint,
         msg: "`seeds` and `associated_token::*` cannot be used on the same field",
     },

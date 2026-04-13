@@ -138,17 +138,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Classify each arg as Pod-dynamic or fixed
         let mut pod_dyns: Vec<Option<PodDynField>> = Vec::with_capacity(remaining.len());
         for pt in &remaining {
-            let pd = if let Some(max) = classify_pod_string(&pt.ty) {
-                Some(PodDynField::Str { max })
-            } else if let Some((elem, max)) = classify_pod_vec(&pt.ty) {
-                Some(PodDynField::Vec {
-                    elem: Box::new(elem),
-                    max,
-                })
-            } else {
-                None
-            };
-            pod_dyns.push(pd);
+            pod_dyns.push(classify_pod_string(&pt.ty).or_else(|| classify_pod_vec(&pt.ty)));
         }
 
         let has_dynamic = pod_dyns.iter().any(|pd| pd.is_some());
@@ -258,12 +248,16 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let name = &field_names[i];
                 let (read_call, max_lit) = match pd {
                     None => continue,
-                    Some(PodDynField::Str { max }) => (
-                        quote!(quasar_lang::instruction_data::read_dynamic_str::<1>),
+                    Some(PodDynField::Str { max, prefix_bytes }) => (
+                        quote!(quasar_lang::instruction_data::read_dynamic_str::<#prefix_bytes>),
                         *max,
                     ),
-                    Some(PodDynField::Vec { elem, max }) => (
-                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, 2>),
+                    Some(PodDynField::Vec {
+                        elem,
+                        max,
+                        prefix_bytes,
+                    }) => (
+                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, #prefix_bytes>),
                         *max,
                     ),
                 };

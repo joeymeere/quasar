@@ -1061,20 +1061,14 @@ fn rust_field_type(ty: &IdlType) -> String {
         IdlType::DynString { string } => prefix_generic("DynBytes", string.prefix_bytes),
         IdlType::DynVec { vec } => {
             let inner = rust_field_type(&vec.items);
-            match vec.prefix_bytes {
-                4 => format!("DynVec<{}>", inner),
-                _ => format!("DynVec<{}, {}>", inner, prefix_rust_type(vec.prefix_bytes)),
-            }
+            format!("DynVec<{}, {}>", inner, prefix_rust_type(vec.prefix_bytes))
         }
         IdlType::Defined { defined } => defined.clone(),
     }
 }
 
 fn prefix_generic(wrapper: &str, prefix_bytes: usize) -> String {
-    match prefix_bytes {
-        4 => wrapper.to_string(),
-        _ => format!("{}<{}>", wrapper, prefix_rust_type(prefix_bytes)),
-    }
+    format!("{}<{}>", wrapper, prefix_rust_type(prefix_bytes))
 }
 
 fn prefix_rust_type(prefix_bytes: usize) -> &'static str {
@@ -1082,7 +1076,7 @@ fn prefix_rust_type(prefix_bytes: usize) -> &'static str {
         1 => "u8",
         2 => "u16",
         4 => "u32",
-        _ => "u32",
+        _ => "u64",
     }
 }
 
