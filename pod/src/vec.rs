@@ -552,6 +552,126 @@ unsafe impl<'__de, T: Copy, const N: usize, const PFX: usize, C: wincode::config
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn encode_decode_roundtrip_pfx1() {
+        let n: usize = kani::any();
+        kani::assume(n <= u8::MAX as usize);
+        let mut v = PodVec::<u8, 255, 1>::default();
+        v.encode_len(n);
+        assert!(v.decode_len() == n);
+    }
+
+    #[kani::proof]
+    fn encode_decode_roundtrip_pfx2() {
+        let n: usize = kani::any();
+        kani::assume(n <= u16::MAX as usize);
+        let mut v = PodVec::<u8, 255, 2>::default();
+        v.encode_len(n);
+        assert!(v.decode_len() == n);
+    }
+
+    #[kani::proof]
+    fn encode_decode_roundtrip_pfx4() {
+        let n: usize = kani::any();
+        kani::assume(n <= u32::MAX as usize);
+        let mut v = PodVec::<u8, 255, 4>::default();
+        v.encode_len(n);
+        assert!(v.decode_len() == n);
+    }
+
+    #[kani::proof]
+    fn len_clamp_pfx2() {
+        let raw: [u8; 2] = kani::any();
+        let v = PodVec::<u8, 8, 2> {
+            len: raw,
+            data: [MaybeUninit::uninit(); 8],
+        };
+        assert!(v.len() <= 8);
+    }
+
+    #[kani::proof]
+    fn len_clamp_pfx1() {
+        let raw: [u8; 1] = kani::any();
+        let v = PodVec::<u8, 8, 1> {
+            len: raw,
+            data: [MaybeUninit::uninit(); 8],
+        };
+        assert!(v.len() <= 8);
+    }
+
+    #[kani::proof]
+    fn push_pop_roundtrip() {
+        let val: u8 = kani::any();
+        let mut v = PodVec::<u8, 4, 1>::default();
+        assert!(v.push(val));
+        assert!(v.len() == 1);
+        assert!(v.pop() == Some(val));
+        assert!(v.is_empty());
+    }
+
+    #[kani::proof]
+    fn push_full_rejects() {
+        let mut v = PodVec::<u8, 2, 1>::default();
+        assert!(v.push(1));
+        assert!(v.push(2));
+        assert!(!v.push(3));
+        assert!(v.len() == 2);
+    }
+
+    #[kani::proof]
+    fn push_pop_lifo() {
+        let a: u8 = kani::any();
+        let b: u8 = kani::any();
+        let mut v = PodVec::<u8, 4, 1>::default();
+        assert!(v.push(a));
+        assert!(v.push(b));
+        assert!(v.pop() == Some(b));
+        assert!(v.pop() == Some(a));
+    }
+
+    #[kani::proof]
+    fn swap_remove_correctness() {
+        let a: u8 = kani::any();
+        let b: u8 = kani::any();
+        let c: u8 = kani::any();
+        let mut v = PodVec::<u8, 4, 1>::default();
+        assert!(v.push(a));
+        assert!(v.push(b));
+        assert!(v.push(c));
+        assert!(v.swap_remove(0) == Some(a));
+        assert!(v.len() == 2);
+        assert!(v.as_slice()[0] == c);
+        assert!(v.as_slice()[1] == b);
+    }
+
+    #[kani::proof]
+    fn swap_remove_oob() {
+        let idx: usize = kani::any();
+        let mut v = PodVec::<u8, 4, 1>::default();
+        assert!(v.push(1));
+        assert!(v.push(2));
+        kani::assume(idx >= 2);
+        kani::assume(idx <= 8);
+        assert!(v.swap_remove(idx).is_none());
+        assert!(v.len() == 2);
+    }
+
+    #[kani::proof]
+    fn set_from_slice_rejects_over_capacity() {
+        let count: usize = kani::any();
+        kani::assume(count > 4);
+        kani::assume(count <= 8);
+        let data = [0u8; 8];
+        let mut v = PodVec::<u8, 4, 1>::default();
+        assert!(!v.set_from_slice(&data[..count]));
+        assert!(v.is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
