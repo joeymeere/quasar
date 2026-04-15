@@ -1,4 +1,5 @@
 use {
+    crate::helpers::mollusk_for_program,
     mollusk_svm::{program::keyed_account_for_system_program, result::ProgramResult, Mollusk},
     quasar_lang::prelude::ProgramError,
     quasar_test_misc::cpi::*,
@@ -203,10 +204,7 @@ fn build_dyn_bytes_check_instruction(account: Address, expected_len: u8) -> Inst
 }
 
 fn setup() -> Mollusk {
-    Mollusk::new(
-        &quasar_test_misc::ID,
-        "../../target/deploy/quasar_test_misc",
-    )
+    mollusk_for_program(&quasar_test_misc::ID, "quasar_test_misc")
 }
 
 // ============================================================================

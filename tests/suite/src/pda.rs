@@ -1,4 +1,5 @@
 use {
+    crate::helpers::mollusk_for_program,
     mollusk_svm::{program::keyed_account_for_system_program, Mollusk},
     quasar_test_pda::cpi::*,
     solana_account::Account,
@@ -15,7 +16,7 @@ const MAX_SEED_SIZE: usize = 2;
 const THREE_SEED_SIZE: usize = 66;
 
 fn setup() -> Mollusk {
-    Mollusk::new(&quasar_test_pda::ID, "../../target/deploy/quasar_test_pda")
+    mollusk_for_program(&quasar_test_pda::ID, "quasar_test_pda")
 }
 
 fn build_user_account_data(authority: Address, value: u64, bump: u8) -> Vec<u8> {
