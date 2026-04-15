@@ -132,7 +132,7 @@ pub trait ParseAccounts<'input>: Sized {
     ///
     /// When `#[instruction(args)]` is present on the Accounts struct, the
     /// derived impl deserializes declared args from `data` and makes them
-    /// available during account initialization (e.g. for `metadata::name`).
+    /// available during account validation and initialization.
     ///
     /// The default implementation ignores `data` and delegates to `parse`.
     #[inline(always)]

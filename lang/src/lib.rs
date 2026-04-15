@@ -75,6 +75,163 @@ pub mod __internal {
     pub const NODUP_MUT_SIGNER: u32 = 0xFF | (1 << 8) | (1 << 16);
     /// Not borrowed + executable.
     pub const NODUP_EXECUTABLE: u32 = 0xFF | (1 << 24);
+
+    /// Size of the SVM account header: `RuntimeAccount` struct + 10 KiB
+    /// realloc padding + trailing `u64` length.
+    pub const ACCOUNT_HEADER: usize = core::mem::size_of::<RuntimeAccount>()
+        + MAX_PERMITTED_DATA_INCREASE
+        + core::mem::size_of::<u64>();
+
+    /// Packed flags for [`parse_account_dup`]. Keeps the param count under the
+    /// sBPF 5-register limit to avoid stack spills.
+    #[derive(Clone, Copy)]
+    pub struct ParseFlags {
+        /// Expected header value (const).
+        pub expected: u32,
+        /// Required-mask for the cold-path minimum-requirements check.
+        pub mask: u32,
+        /// Flag-only mask (excludes borrow_state byte).
+        pub flag_mask: u32,
+        /// Whether this field is `Option<T>`.
+        pub is_optional: bool,
+        /// Whether the field reference is `&mut`.
+        pub is_ref_mut: bool,
+        /// Whether the field has `#[account(dup)]`.
+        pub allow_dup: bool,
+    }
+
+    /// Parse a non-duplicate account from the SVM input buffer (hot path).
+    ///
+    /// Reads the 4-byte header, compares against `expected`. On exact match,
+    /// writes the `AccountView` and advances `input` past the account data +
+    /// alignment padding. On mismatch, the cold `decode_header_error` path
+    /// checks minimum requirements.
+    ///
+    /// Returns the updated input pointer on success.
+    #[inline(always)]
+    pub unsafe fn parse_account(
+        input: *mut u8,
+        base: *mut AccountView,
+        offset: usize,
+        expected: u32,
+        mask: u32,
+    ) -> Result<*mut u8, solana_program_error::ProgramError> {
+        debug_assert!(
+            input as usize & 7 == 0,
+            "parse_account: input pointer is not 8-byte aligned"
+        );
+        let raw = input as *mut RuntimeAccount;
+        let header = *(raw as *const u32);
+
+        if crate::utils::hint::unlikely(header != expected) {
+            let err = crate::decode_header_error(header, expected, mask);
+            if err != 0 {
+                return Err(solana_program_error::ProgramError::from(err));
+            }
+        }
+
+        core::ptr::write(base.add(offset), AccountView::new_unchecked(raw));
+        let input = input.add(ACCOUNT_HEADER.wrapping_add((*raw).data_len as usize));
+        let input = input.add((input as usize).wrapping_neg() & 7);
+        Ok(input)
+    }
+
+    /// Parse an account that may be a duplicate or optional (cold-ish path).
+    ///
+    /// Handles:
+    /// - Optional sentinel guards (program_id == account address means None)
+    /// - Duplicate account reuse with borrow-state tracking
+    /// - Mutable dup rejection when `!flags.allow_dup`
+    /// - Mask-based flag checks
+    ///
+    /// Returns the updated input pointer on success.
+    #[inline(always)]
+    pub unsafe fn parse_account_dup(
+        input: *mut u8,
+        base: *mut AccountView,
+        offset: usize,
+        program_id: &solana_address::Address,
+        flags: ParseFlags,
+    ) -> Result<*mut u8, solana_program_error::ProgramError> {
+        use solana_program_error::ProgramError;
+
+        debug_assert!(
+            input as usize & 7 == 0,
+            "parse_account_dup: input pointer is not 8-byte aligned"
+        );
+        let raw = input as *mut RuntimeAccount;
+        let actual_header = *(raw as *const u32);
+
+        if (actual_header & 0xFF) == NOT_BORROWED as u32 {
+            // Not a dup — validate flags.
+            if flags.is_optional {
+                // Optional: skip flag check if address == program_id (sentinel
+                // for None).
+                if !crate::keys_eq(&(*raw).address, program_id) {
+                    let expected_flags = flags.expected & flags.flag_mask;
+                    if crate::utils::hint::unlikely(
+                        (actual_header & flags.flag_mask) != expected_flags,
+                    ) {
+                        return Err(ProgramError::from(crate::decode_header_error(
+                            actual_header,
+                            flags.expected,
+                            flags.mask,
+                        )));
+                    }
+                }
+            } else {
+                let expected_flags = flags.expected & flags.flag_mask;
+                if crate::utils::hint::unlikely((actual_header & flags.flag_mask) != expected_flags)
+                {
+                    return Err(ProgramError::from(crate::decode_header_error(
+                        actual_header,
+                        flags.expected,
+                        flags.mask,
+                    )));
+                }
+            }
+            core::ptr::write(base.add(offset), AccountView::new_unchecked(raw));
+            let input = input.add(ACCOUNT_HEADER.wrapping_add((*raw).data_len as usize));
+            let input = input.add((input as usize).wrapping_neg() & 7);
+            Ok(input)
+        } else {
+            // Dup branch: borrow_state != NOT_BORROWED means the SVM
+            // deduplicated this account slot.
+            if flags.is_ref_mut && !flags.allow_dup {
+                // Mutable dups without #[account(dup)] are rejected.
+                return Err(ProgramError::AccountBorrowFailed);
+            }
+
+            let idx = (actual_header & 0xFF) as usize;
+            if crate::utils::hint::unlikely(idx >= offset) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+
+            if flags.is_ref_mut {
+                // Mutable dup: claim exclusive access.
+                let orig_view = core::ptr::read(base.add(idx));
+                let bs_ptr = orig_view.account_ptr() as *mut u8;
+                let bs = *bs_ptr;
+                if crate::utils::hint::unlikely(bs != NOT_BORROWED) {
+                    return Err(ProgramError::AccountBorrowFailed);
+                }
+                *bs_ptr = 0;
+            } else {
+                // Immutable dup: consume one immutable borrow slot.
+                let orig_view = core::ptr::read(base.add(idx));
+                let bs_ptr = orig_view.account_ptr() as *mut u8;
+                let bs = *bs_ptr;
+                if crate::utils::hint::unlikely(bs <= 1) {
+                    return Err(ProgramError::AccountBorrowFailed);
+                }
+                *bs_ptr = bs - 1;
+            }
+
+            core::ptr::write(base.add(offset), core::ptr::read(base.add(idx)));
+            let input = input.add(core::mem::size_of::<u64>());
+            Ok(input)
+        }
+    }
 }
 
 /// Declarative macros: `define_account!`, `require!`, `require_eq!`, `emit!`.
@@ -83,6 +240,14 @@ pub mod macros;
 /// Sysvar access and the `impl_sysvar_get!` helper macro.
 #[macro_use]
 pub mod sysvars;
+/// Runtime exit functions for program-owned accounts (close).
+pub mod account_exit;
+/// Runtime init functions for program-owned accounts.
+pub mod account_init;
+/// Inner-type trait for `Account<T>` / `InterfaceAccount<T>` validation params.
+pub mod account_inner;
+/// Trait-based account loading and validation (`AccountLoad`).
+pub mod account_load;
 /// Zero-copy account wrapper types for instruction handlers.
 pub mod accounts;
 /// Compile-time account validation traits (`Address`, `Owner`, `Executable`,

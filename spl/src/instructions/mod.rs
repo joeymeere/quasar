@@ -10,7 +10,10 @@ mod transfer;
 mod transfer_checked;
 
 use quasar_lang::{cpi::CpiCall, prelude::*};
-pub use {initialize_account::initialize_account3, initialize_mint::initialize_mint2};
+pub use {
+    close_account::close_account, initialize_account::initialize_account3,
+    initialize_mint::initialize_mint2, transfer_checked::transfer_checked,
+};
 
 /// Trait for types that can execute SPL Token CPI calls.
 ///

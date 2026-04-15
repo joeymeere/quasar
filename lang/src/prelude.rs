@@ -14,6 +14,8 @@
 // AccountView
 pub use {
     crate::{
+        account_inner::AccountInner,
+        account_load::AccountLoad,
         accounts::*,
         checks,
         context::{Context, Ctx, CtxWithRemaining},

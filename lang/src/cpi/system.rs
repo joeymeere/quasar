@@ -287,3 +287,53 @@ impl crate::accounts::Program<System> {
         )
     }
 }
+
+/// Initialize an account with automatic rent calculation.
+///
+/// Computes the minimum rent-exempt balance from the provided `Rent`, then
+/// delegates to [`init_account`]. Used by the derive macro's init codegen to
+/// replace the inline rent-calc + CPI sequence with a single function call.
+///
+/// # Parameters
+///
+/// - `payer`: funding account (must be a signer)
+/// - `account`: account to initialize (writable; PDA signer seeds in `signers`)
+/// - `space`: account data size in bytes
+/// - `owner`: program to own the new account
+/// - `signers`: PDA signer seeds (empty slice for keypair-signed accounts)
+/// - `rent`: shared rent struct (from Sysvar or account data)
+#[inline(always)]
+pub fn init_account_with_rent(
+    payer: &AccountView,
+    account: &mut AccountView,
+    space: u64,
+    owner: &Address,
+    signers: &[Signer],
+    rent: &crate::sysvars::rent::Rent,
+) -> ProgramResult {
+    let lamports = rent.try_minimum_balance(space as usize)?;
+    init_account(payer, account, lamports, space, owner, signers)
+}
+
+/// Write a discriminator to an account's data buffer.
+///
+/// Used by the derive macro after `init_account` to stamp the Account<T>
+/// discriminator. Separated from init so the same CPI body can be reused for
+/// token/mint accounts which don't need discriminator writes.
+#[inline(always)]
+pub fn write_discriminator(
+    account: &mut AccountView,
+    discriminator: &[u8],
+) -> Result<(), solana_program_error::ProgramError> {
+    if discriminator.len() > account.data_len() {
+        return Err(solana_program_error::ProgramError::AccountDataTooSmall);
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            discriminator.as_ptr(),
+            account.data_mut_ptr(),
+            discriminator.len(),
+        );
+    }
+    Ok(())
+}

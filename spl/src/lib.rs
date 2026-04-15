@@ -139,6 +139,8 @@ macro_rules! impl_program_account {
 
 mod associated_token;
 mod constants;
+mod exit;
+mod init;
 mod instructions;
 mod interface;
 mod state;
@@ -153,12 +155,14 @@ pub use {
         AssociatedTokenProgram,
     },
     constants::{ATA_PROGRAM_ID, SPL_TOKEN_ID, TOKEN_2022_ID},
+    exit::{close_token_account, sweep_token_account},
+    init::{init_ata, init_mint_account, init_token_account},
     instructions::{initialize_account3, initialize_mint2, TokenCpi},
     interface::TokenInterface,
     // Re-export from quasar_lang for backward compatibility.
     quasar_lang::accounts::interface_account::InterfaceAccount,
     state::{COption, MintAccountState, TokenAccountState},
-    token::{Mint, Token},
+    token::{Mint, MintParams, Token, TokenParams},
     token_2022::{Mint2022, Token2022},
     validate::{validate_ata, validate_mint, validate_token_account},
 };
