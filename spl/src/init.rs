@@ -27,6 +27,7 @@ pub fn init_token_account(
 
 /// Create mint account + initialize_mint2.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub fn init_mint_account(
     payer: &AccountView,
     account: &mut AccountView,
@@ -58,6 +59,7 @@ pub fn init_mint_account(
 /// Create an ATA via the ATA program. Uses `CreateIdempotent` when `idempotent`
 /// is true.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub fn init_ata(
     ata_program: &AccountView,
     payer: &AccountView,

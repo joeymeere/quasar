@@ -106,7 +106,7 @@ fn lower_directive(directive: ParsedDirective) -> syn::Result<AccountDirective> 
         return expect_bare(directive, AccountDirective::Mut);
     }
 
-    let path = directive_path(&directive);
+    let path = directive_path(&directive)?;
     let names = path_idents(path);
     match names.as_slice() {
         [name] if *name == "init" => expect_bare(directive, AccountDirective::Init),
@@ -148,9 +148,9 @@ fn lower_directive(directive: ParsedDirective) -> syn::Result<AccountDirective> 
         [ns, sub] if *ns == "token" && *sub == "mint" => {
             Ok(AccountDirective::TokenMint(expect_ident_value(directive)?))
         }
-        [ns, sub] if *ns == "token" && *sub == "authority" => Ok(
-            AccountDirective::TokenAuthority(expect_ident_value(directive)?),
-        ),
+        [ns, sub] if *ns == "token" && *sub == "authority" => Ok(AccountDirective::TokenAuthority(
+            expect_ident_value(directive)?,
+        )),
         [ns, sub] if *ns == "token" && *sub == "token_program" => Ok(
             AccountDirective::TokenTokenProgram(expect_ident_value(directive)?),
         ),
@@ -202,7 +202,7 @@ fn lower_seeds_directive(directive: ParsedDirective) -> syn::Result<AccountDirec
     ensure_no_error(&directive)?;
     let Some(expr) = directive.value else {
         return Err(syn::Error::new_spanned(
-            directive_path(&directive),
+            directive_path(&directive)?,
             "`seeds` requires a value",
         ));
     };
@@ -293,7 +293,7 @@ fn expect_optional_expr(directive: ParsedDirective) -> syn::Result<Option<Expr>>
 
 fn expect_value(directive: ParsedDirective) -> syn::Result<Expr> {
     let label = join_directive(&directive);
-    let span = directive_path(&directive).clone();
+    let span = directive_path(&directive)?.clone();
     directive
         .value
         .ok_or_else(|| syn::Error::new_spanned(span, format!("`{label}` requires a value")))
@@ -324,10 +324,13 @@ fn ensure_no_error(directive: &ParsedDirective) -> syn::Result<()> {
     }
 }
 
-fn directive_path(directive: &ParsedDirective) -> &Path {
+fn directive_path(directive: &ParsedDirective) -> syn::Result<&Path> {
     match &directive.key {
-        DirectiveKey::Mut => panic!("bare mut does not have a path"),
-        DirectiveKey::Path(path) => path,
+        DirectiveKey::Mut => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "`mut` does not have a directive path",
+        )),
+        DirectiveKey::Path(path) => Ok(path),
     }
 }
 
@@ -339,10 +342,7 @@ fn join_directive(directive: &ParsedDirective) -> String {
 }
 
 fn path_idents(path: &Path) -> Vec<&syn::Ident> {
-    path.segments
-        .iter()
-        .map(|segment| &segment.ident)
-        .collect()
+    path.segments.iter().map(|segment| &segment.ident).collect()
 }
 
 fn join_path(path: &Path) -> String {
