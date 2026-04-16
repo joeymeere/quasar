@@ -102,6 +102,9 @@ fn generate_ts(idl: &Idl, target: TsTarget) -> String {
     if used.contains("bool") {
         codec_imports.push("getBooleanCodec");
     }
+    if used.contains("option") {
+        codec_imports.push("getOptionCodec");
+    }
     // PublicKey codec imports: web3.js uses custom helper, kit uses getAddressCodec
     // from @solana/kit
     if target == TsTarget::Web3js && has_public_key {
@@ -895,7 +898,9 @@ fn collect_used_codecs(idl: &Idl) -> HashSet<String> {
         IdlType::Primitive(p) => {
             used.insert(p.clone());
         }
-        IdlType::Option { .. } => {}
+        IdlType::Option { .. } => {
+            used.insert("option".to_string());
+        }
         IdlType::Defined { .. } => {}
         IdlType::DynString { string } => {
             used.insert("dynString".to_string());
@@ -923,8 +928,10 @@ fn collect_used_codecs(idl: &Idl) -> HashSet<String> {
 
 fn visit_type(ty: &IdlType, visit: &mut impl FnMut(&IdlType)) {
     visit(ty);
-    if let IdlType::DynVec { vec } = ty {
-        visit_type(&vec.items, visit);
+    match ty {
+        IdlType::Option { option } => visit_type(option, visit),
+        IdlType::DynVec { vec } => visit_type(&vec.items, visit),
+        _ => {}
     }
 }
 
