@@ -154,6 +154,23 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        let first_dynamic = arg_classes
+            .iter()
+            .position(|cls| !matches!(cls, ArgClass::Fixed));
+        let last_fixed = arg_classes
+            .iter()
+            .rposition(|cls| matches!(cls, ArgClass::Fixed));
+        if let (Some(fd), Some(lf)) = (first_dynamic, last_fixed) {
+            if lf > fd {
+                return syn::Error::new_spanned(
+                    &remaining[lf],
+                    "fixed instruction args must precede all dynamic or borrowed args",
+                )
+                .to_compile_error()
+                .into();
+            }
+        }
+
         let vec_align_asserts: Vec<proc_macro2::TokenStream> = arg_classes
             .iter()
             .filter_map(|cls| match cls {
@@ -174,34 +191,125 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
 
-        new_stmts.push(syn::parse_quote!(
-            let mut __cursor = quasar_lang::instruction_data::InstructionCursor::new(#param_ident.data);
-        ));
+        let has_dynamic = arg_classes
+            .iter()
+            .any(|cls| !matches!(cls, ArgClass::Fixed));
+        let has_fixed = arg_classes.iter().any(|cls| matches!(cls, ArgClass::Fixed));
+        let zc_field_names: Vec<_> = field_names
+            .iter()
+            .zip(arg_classes.iter())
+            .filter_map(|(name, cls)| match cls {
+                ArgClass::Fixed => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        let zc_field_orig_types: Vec<_> = remaining
+            .iter()
+            .zip(arg_classes.iter())
+            .filter_map(|(pt, cls)| match cls {
+                ArgClass::Fixed => Some((*pt.ty).clone()),
+                _ => None,
+            })
+            .collect();
+        let zc_field_types: Vec<_> = zc_field_orig_types
+            .iter()
+            .map(|ty| quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc })
+            .collect();
 
-        for (i, cls) in arg_classes.iter().enumerate() {
-            let name = &field_names[i];
-            match cls {
-                ArgClass::Fixed | ArgClass::Lifetime => {
-                    let ty = &remaining[i].ty;
-                    new_stmts.push(syn::parse_quote!(
-                        let #name = <#ty as quasar_lang::instruction_arg::InstructionArgDecode<'_>>::decode_from_cursor(&mut __cursor)?;
-                    ));
+        if has_fixed {
+            new_stmts.push(syn::parse_quote!(
+                #[repr(C)]
+                struct InstructionDataZc {
+                    #(#zc_field_names: #zc_field_types,)*
                 }
-                ArgClass::PodDyn(PodDynField::Str { max, prefix_bytes }) => {
-                    new_stmts.push(syn::parse_quote!(
-                        let #name = __cursor.read_dynamic_str::<#prefix_bytes>(#max)?;
-                    ));
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                const _: () = assert!(
+                    core::mem::align_of::<InstructionDataZc>() == 1,
+                    "instruction data ZC struct must have alignment 1 — all instruction arg types \
+                     must implement InstructionArg with an alignment-1 Zc companion"
+                );
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                if #param_ident.data.len() < core::mem::size_of::<InstructionDataZc>() {
+                    return Err(ProgramError::InvalidInstructionData);
                 }
-                ArgClass::PodDyn(PodDynField::Vec {
-                    elem,
-                    max,
-                    prefix_bytes,
-                }) => {
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const InstructionDataZc) };
+            ));
+
+            for (name, ty) in zc_field_names.iter().zip(zc_field_orig_types.iter()) {
+                new_stmts.push(syn::parse_quote!(
+                    <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&__zc.#name)?;
+                ));
+                new_stmts.push(syn::parse_quote!(
+                    let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
+                ));
+            }
+        }
+
+        if has_dynamic {
+            new_stmts.push(syn::parse_quote!(
+                let __data = #param_ident.data;
+            ));
+            if has_fixed {
+                new_stmts.push(syn::parse_quote!(
+                    let mut __offset = core::mem::size_of::<InstructionDataZc>();
+                ));
+            } else {
+                new_stmts.push(syn::parse_quote!(
+                    let mut __offset: usize = 0;
+                ));
+            }
+
+            let dyn_count = arg_classes
+                .iter()
+                .filter(|cls| !matches!(cls, ArgClass::Fixed))
+                .count();
+            let mut dyn_idx = 0usize;
+
+            for (i, cls) in arg_classes.iter().enumerate() {
+                let name = &field_names[i];
+                let decode_call = match cls {
+                    ArgClass::Fixed => continue,
+                    ArgClass::Lifetime => {
+                        let ty = &remaining[i].ty;
+                        quote!(<#ty as quasar_lang::instruction_arg::InstructionArgDecode<'_>>::decode(__data, __offset)?)
+                    }
+                    ArgClass::PodDyn(PodDynField::Str { max, prefix_bytes }) => {
+                        quote!(quasar_lang::instruction_data::read_dynamic_str::<#prefix_bytes>(__data, __offset, #max)?)
+                    }
+                    ArgClass::PodDyn(PodDynField::Vec {
+                        elem,
+                        max,
+                        prefix_bytes,
+                    }) => {
+                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, #prefix_bytes>(__data, __offset, #max)?)
+                    }
+                };
+
+                dyn_idx += 1;
+                if dyn_idx < dyn_count {
                     new_stmts.push(syn::parse_quote!(
-                        let #name = __cursor.read_dynamic_vec::<#elem, #prefix_bytes>(#max)?;
+                        let (#name, __new_offset) = #decode_call;
+                    ));
+                    new_stmts.push(syn::parse_quote!(
+                        __offset = __new_offset;
+                    ));
+                } else {
+                    new_stmts.push(syn::parse_quote!(
+                        let (#name, _) = #decode_call;
                     ));
                 }
             }
+
+            new_stmts.push(syn::parse_quote!(
+                let _ = __offset;
+            ));
         }
 
         // Clear ctx.data after extraction

@@ -137,3 +137,5 @@ pub mod dynamic_stack_cache;
 pub use dynamic_stack_cache::*;
 pub mod dynamic_view_mut;
 pub use dynamic_view_mut::*;
+pub mod dynamic_view_mut_missing_field;
+pub use dynamic_view_mut_missing_field::*;

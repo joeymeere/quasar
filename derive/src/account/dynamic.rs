@@ -333,7 +333,7 @@ pub(super) fn emit_dyn_writer(
             let name = field.ident.as_ref().expect("field must be named");
             let slot = format_ident!("__{}", name);
             quote! {
-                let #name = self.#slot.ok_or(ProgramError::InvalidInstructionData)?;
+                let #name = self.#slot.ok_or(QuasarError::DynWriterFieldNotSet)?;
             }
         })
         .collect();
@@ -421,6 +421,11 @@ pub(super) fn emit_dyn_writer(
                 rent_lpb: u64,
                 rent_threshold: u64,
             ) -> #writer_name<'a> {
+                // SAFETY: `self.__view` is the transparent account backing store for this
+                // wrapper. Reborrowing it as `&mut AccountView` is sound here because the
+                // writer exclusively owns `&'a mut self` for its full lifetime and does not
+                // create any competing mutable references. This follows the same Tree Borrows
+                // pattern used by the dynamic stack-cache guard path.
                 let __view = unsafe { &mut *(&mut self.__view as *mut AccountView) };
                 #writer_name {
                     __view,

@@ -136,15 +136,15 @@ fn build_mutate_then_readback_instruction(
     account: Address,
     payer: Address,
     system_program: Address,
-    new_name: &[u8],
     expected_tags_count: u8,
+    new_name: &[u8],
 ) -> Instruction {
-    // Layout: [disc(27)][u8:name_len][name_bytes][expected_tags_count(u8)]
-    // Instruction args are declaration-ordered on the wire.
+    // Layout: [disc(27)][expected_tags_count(u8)][u8:name_len][name_bytes]
+    // Fixed args occupy the instruction header; dynamic args form a suffix.
     let mut data = vec![27];
+    data.push(expected_tags_count);
     data.push(new_name.len() as u8);
     data.extend_from_slice(new_name);
-    data.push(expected_tags_count);
     Instruction {
         program_id: quasar_test_misc::ID,
         accounts: vec![
@@ -170,6 +170,26 @@ fn build_dynamic_view_mut_instruction(
     for tag in new_tags {
         data.extend_from_slice(tag.as_ref());
     }
+    Instruction {
+        program_id: quasar_test_misc::ID,
+        accounts: vec![
+            solana_instruction::AccountMeta::new(account, false),
+            solana_instruction::AccountMeta::new(payer, true),
+            solana_instruction::AccountMeta::new_readonly(system_program, false),
+        ],
+        data,
+    }
+}
+
+fn build_dynamic_view_mut_missing_field_instruction(
+    account: Address,
+    payer: Address,
+    system_program: Address,
+    new_name: &[u8],
+) -> Instruction {
+    let mut data = vec![59];
+    data.push(new_name.len() as u8);
+    data.extend_from_slice(new_name);
     Instruction {
         program_id: quasar_test_misc::ID,
         accounts: vec![
@@ -1651,7 +1671,7 @@ fn test_adversarial_mutate_grow_then_readback_tags() {
 
     // Grow name from "ab" (2) to "12345678" (8=max), expect 2 tags preserved
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"12345678", 2);
+        build_mutate_then_readback_instruction(account, payer, system_program, 2, b"12345678");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1701,7 +1721,7 @@ fn test_adversarial_mutate_shrink_then_readback_tags() {
 
     // Shrink name from "12345678" (8) to "x" (1), expect 2 tags preserved
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"x", 2);
+        build_mutate_then_readback_instruction(account, payer, system_program, 2, b"x");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1748,7 +1768,7 @@ fn test_adversarial_mutate_to_empty_then_readback_tags() {
     let payer_account = Account::new(10_000_000_000, 0, &system_program);
 
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"", 1);
+        build_mutate_then_readback_instruction(account, payer, system_program, 1, b"");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1793,7 +1813,7 @@ fn test_adversarial_mutate_empty_to_max_then_readback() {
 
     // Grow name from "" (0) to "12345678" (8=max)
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"12345678", 1);
+        build_mutate_then_readback_instruction(account, payer, system_program, 1, b"12345678");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1848,7 +1868,7 @@ fn test_adversarial_sequential_mutations_grow_shrink_grow() {
 
     // Step 1: Grow "ab" → "12345678" (max)
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"12345678", 2);
+        build_mutate_then_readback_instruction(account, payer, system_program, 2, b"12345678");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1866,7 +1886,7 @@ fn test_adversarial_sequential_mutations_grow_shrink_grow() {
 
     // Step 2: Shrink "12345678" → "x"
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"x", 2);
+        build_mutate_then_readback_instruction(account, payer, system_program, 2, b"x");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1884,7 +1904,7 @@ fn test_adversarial_sequential_mutations_grow_shrink_grow() {
 
     // Step 3: Grow again "x" → "abcdef" (6 bytes, not max)
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"abcdef", 2);
+        build_mutate_then_readback_instruction(account, payer, system_program, 2, b"abcdef");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -1938,7 +1958,7 @@ fn test_adversarial_mutate_noop_same_name() {
     let payer_account = Account::new(10_000_000_000, 0, &system_program);
 
     let instruction =
-        build_mutate_then_readback_instruction(account, payer, system_program, b"hello", 1);
+        build_mutate_then_readback_instruction(account, payer, system_program, 1, b"hello");
     let result = mollusk.process_instruction(
         &instruction,
         &[
@@ -2011,6 +2031,46 @@ fn test_dynamic_view_mut_replaces_name_and_tags() {
     assert_eq!(tags_count, 2);
     assert_eq!(&rd[11..43], new_tag1.as_ref());
     assert_eq!(&rd[43..75], new_tag2.as_ref());
+}
+
+#[test]
+fn test_dynamic_view_mut_missing_field_returns_specific_error() {
+    let mollusk = setup();
+    let (system_program, system_program_account) = keyed_account_for_system_program();
+    let account = Address::new_unique();
+    let payer = Address::new_unique();
+
+    let old_tag = Address::new_unique();
+    let account_bytes = build_dynamic_account_data(b"old", &[old_tag]);
+    let account_data = Account {
+        lamports: 1_000_000,
+        data: account_bytes.clone(),
+        owner: quasar_test_misc::ID,
+        executable: false,
+        rent_epoch: 0,
+    };
+    let payer_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let instruction =
+        build_dynamic_view_mut_missing_field_instruction(account, payer, system_program, b"rename");
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (account, account_data),
+            (payer, payer_account),
+            (system_program, system_program_account),
+        ],
+    );
+
+    assert!(
+        result.program_result.is_ok(),
+        "missing dynamic writer field should be handled as expected: {:?}",
+        result.program_result
+    );
+    assert_eq!(
+        result.resulting_accounts[0].1.data, account_bytes,
+        "failed writer commit must not mutate account data"
+    );
 }
 
 // ============================================================================

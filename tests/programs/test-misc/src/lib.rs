@@ -172,10 +172,10 @@ mod quasar_test_misc {
     #[instruction(discriminator = 27)]
     pub fn mutate_then_readback(
         ctx: Ctx<MutateThenReadback>,
-        new_name: String<8>,
         expected_tags_count: u8,
+        new_name: String<8>,
     ) -> Result<(), ProgramError> {
-        ctx.accounts.handler(new_name, expected_tags_count)
+        ctx.accounts.handler(expected_tags_count, new_name)
     }
 
     #[instruction(discriminator = 28)]
@@ -312,5 +312,13 @@ mod quasar_test_misc {
         new_tags: Vec<Address, 2>,
     ) -> Result<(), ProgramError> {
         ctx.accounts.handler(new_name, new_tags)
+    }
+
+    #[instruction(discriminator = 59)]
+    pub fn dynamic_view_mut_missing_field(
+        ctx: Ctx<DynamicViewMutMissingField>,
+        new_name: String<8>,
+    ) -> Result<(), ProgramError> {
+        ctx.accounts.handler(new_name)
     }
 }
