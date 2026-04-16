@@ -281,6 +281,10 @@ fn render_field_rooted_expr(
             let rewritten = rewrite_init_expr_root(expr, root_ident, wrapper_kind, &base_ty);
             quote! { (#rewritten) as &[u8] }
         }
+        (SeedRenderContext::Method, Some(_)) => {
+            let rewritten = rewrite_method_expr_root(expr, root_ident);
+            quote! { (#rewritten) as &[u8] }
+        }
         _ => render_expr_as_bytes(expr, ctx),
     }
 }
@@ -308,8 +312,16 @@ fn render_literal_seed(bytes: &[u8], cast_slice: bool) -> proc_macro2::TokenStre
 
 fn render_expr_as_bytes(expr: &syn::Expr, ctx: SeedRenderContext) -> proc_macro2::TokenStream {
     match ctx {
-        SeedRenderContext::Method => quote! { (self.#expr) as &[u8] },
-        SeedRenderContext::Parse | SeedRenderContext::Init => quote! { (#expr) as &[u8] },
+        SeedRenderContext::Method => {
+            if matches!(expr, syn::Expr::Path(_)) {
+                quote! { quasar_lang::pda::seed_bytes(&(#expr)) }
+            } else {
+                quote! { quasar_lang::pda::seed_bytes(&(self.#expr)) }
+            }
+        }
+        SeedRenderContext::Parse | SeedRenderContext::Init => {
+            quote! { quasar_lang::pda::seed_bytes(&(#expr)) }
+        }
     }
 }
 
@@ -467,6 +479,41 @@ fn rewrite_init_expr_root(
         syn::Expr::Reference(reference_expr) => {
             let inner =
                 rewrite_init_expr_root(&reference_expr.expr, root_ident, wrapper_kind, base_ty);
+            let mutability = &reference_expr.mutability;
+            quote! { &#mutability (#inner) }
+        }
+        _ => quote! { #expr },
+    }
+}
+
+fn rewrite_method_expr_root(expr: &syn::Expr, root_ident: &syn::Ident) -> proc_macro2::TokenStream {
+    match expr {
+        syn::Expr::Path(ep) if ep.path.segments.len() == 1 && ep.qself.is_none() => {
+            let ident = &ep.path.segments[0].ident;
+            if ident == root_ident {
+                quote! { self.#root_ident }
+            } else {
+                quote! { #expr }
+            }
+        }
+        syn::Expr::Field(field_expr) => {
+            let base = rewrite_method_expr_root(&field_expr.base, root_ident);
+            let member = &field_expr.member;
+            quote! { (#base).#member }
+        }
+        syn::Expr::Paren(paren_expr) => {
+            let inner = rewrite_method_expr_root(&paren_expr.expr, root_ident);
+            quote! { (#inner) }
+        }
+        syn::Expr::MethodCall(method_call) => {
+            let receiver = rewrite_method_expr_root(&method_call.receiver, root_ident);
+            let method = &method_call.method;
+            let turbofish = &method_call.turbofish;
+            let args: Vec<_> = method_call.args.iter().collect();
+            quote! { (#receiver).#method #turbofish ( #(#args),* ) }
+        }
+        syn::Expr::Reference(reference_expr) => {
+            let inner = rewrite_method_expr_root(&reference_expr.expr, root_ident);
             let mutability = &reference_expr.mutability;
             quote! { &#mutability (#inner) }
         }
