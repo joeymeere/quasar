@@ -20,9 +20,9 @@ use {
 /// target wincode 0.4).
 pub fn generate_cargo_toml(name: &str, version: &str, has_pdas: bool) -> String {
     let solana_address = if has_pdas {
-        r#"solana-address = { version = "=2.2.0", features = ["curve25519"] }"#
+        r#"solana-address = { version = "=2.2.0", features = ["curve25519", "wincode"] }"#
     } else {
-        r#"solana-address = "=2.2.0""#
+        r#"solana-address = { version = "=2.2.0", features = ["wincode"] }"#
     };
     format!(
         r#"[package]

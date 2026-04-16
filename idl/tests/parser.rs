@@ -1849,7 +1849,7 @@ fn rust_codegen_pda_dedup() {
 fn rust_codegen_cargo_toml_with_pdas() {
     let toml = generate_cargo_toml("my-program", "0.1.0", true);
     assert!(
-        toml.contains(r#"features = ["curve25519"]"#),
+        toml.contains(r#"features = ["curve25519", "wincode"]"#),
         "PDA programs need curve25519 feature: {toml}"
     );
 }
@@ -1860,6 +1860,10 @@ fn rust_codegen_cargo_toml_without_pdas() {
     assert!(
         !toml.contains("curve25519"),
         "non-PDA programs must not pull in curve25519: {toml}"
+    );
+    assert!(
+        toml.contains(r#"features = ["wincode"]"#),
+        "generated clients must enable wincode support for Address: {toml}"
     );
 }
 
