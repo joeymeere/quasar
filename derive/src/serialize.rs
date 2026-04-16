@@ -11,6 +11,7 @@
 //! 2. No ZC companion or `InstructionArg` impl (not `Copy`).
 
 use {
+    crate::helpers::{canonical_instruction_arg_type, map_to_pod_type},
     proc_macro::TokenStream,
     proc_macro2::TokenStream as TokenStream2,
     quote::{format_ident, quote},
@@ -74,17 +75,16 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
 
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref()).collect();
     let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
-
-    let zc_field_types: Vec<_> = field_types
+    let canonical_field_types: Vec<_> = field_types
         .iter()
-        .map(|ty| {
-            quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc }
-        })
+        .map(|ty| canonical_instruction_arg_type(ty))
         .collect();
+
+    let zc_field_types: Vec<_> = field_types.iter().map(|ty| map_to_pod_type(ty)).collect();
 
     let from_zc_fields: Vec<_> = field_names
         .iter()
-        .zip(field_types.iter())
+        .zip(canonical_field_types.iter())
         .map(|(name, ty)| {
             quote! {
                 #name: <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&zc.#name)
@@ -94,7 +94,7 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
 
     let to_zc_fields: Vec<_> = field_names
         .iter()
-        .zip(field_types.iter())
+        .zip(canonical_field_types.iter())
         .map(|(name, ty)| {
             quote! {
                 #name: <#ty as quasar_lang::instruction_arg::InstructionArg>::to_zc(&self.#name)
@@ -104,7 +104,7 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
 
     let validate_zc_fields: Vec<_> = field_names
         .iter()
-        .zip(field_types.iter())
+        .zip(canonical_field_types.iter())
         .map(|(name, ty)| {
             quote! {
                 <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&zc.#name)?;
